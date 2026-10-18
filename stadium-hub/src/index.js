@@ -35,15 +35,96 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
     if (url.pathname === '/health') return new Response('ok');
-    if (url.pathname !== '/ws') return new Response('Disc Duel stadium hub');
-    if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
-    // Only the game's own pages may connect (browsers always send Origin on a WebSocket handshake).
+    // Only the game's own pages may connect (browsers always send Origin on WebSockets and cross-site requests).
     const allowed = String(env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
     const origin = req.headers.get('Origin') || '';
-    if (allowed.length && !allowed.includes(origin)) return new Response('Origin not allowed', { status: 403 });
+    const originOk = !allowed.length || allowed.includes(origin);
+    if (url.pathname === '/scores') {
+      const cors = { 'Access-Control-Allow-Origin': originOk ? origin || '*' : 'null', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type', 'Vary': 'Origin' };
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+      if (!originOk) return new Response('Origin not allowed', { status: 403, headers: cors });
+      const res = await env.BOARD.get(env.BOARD.idFromName('global')).fetch(req);
+      const out = new Response(res.body, res);
+      for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
+      return out;
+    }
+    if (url.pathname !== '/ws') return new Response('Disc Duel stadium hub');
+    if (req.headers.get('Upgrade') !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
+    if (!originOk) return new Response('Origin not allowed', { status: 403 });
     return env.STADIUM.get(env.STADIUM.idFromName('global')).fetch(req);
   },
 };
+
+// ---------- Worldwide leaderboard ----------
+// GET  /scores?mode=hard          → { runs: [{ name, score, hits, acc, mode, won, opp, at, tag }] } top 20
+// POST /scores  { pid, runs: [...] } (1–20 runs, e.g. a player's old local bests the first time)
+// Each player (a random id kept in their browser) keeps their best 5 rounds per mode.
+// Scores come from players' browsers, so they're checked for sense, not proven.
+const MODES = ['hard', 'normal', 'easy', 'online'];
+const cleanName = v => String(v || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+function cleanRun(r) {
+  if (!r || typeof r !== 'object') return null;
+  const score = Math.round(Number(r.score)), hits = Math.round(Number(r.hits)), acc = Math.round(Number(r.acc)), at = Math.round(Number(r.at));
+  if (!MODES.includes(r.mode)) return null;
+  // A 90 s round can't plausibly go past these.
+  if (!(score > 0 && score <= 2500) || !(hits >= 1 && hits <= 200) || !(acc >= 0 && acc <= 100) || score > hits * 70) return null;
+  if (!(at > 1.7e12 && at < Date.now() + 864e5)) return null;
+  return { name: cleanName(r.name) || 'Player', score, hits, acc, mode: r.mode, won: r.won ? 1 : 0, opp: cleanName(r.opp) || 'CPU', at };
+}
+// A short public tag per player: lets a page spot its own rows without revealing the id.
+async function tagOf(pid) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('disc-duel:' + pid));
+  return [...new Uint8Array(h).slice(0, 6)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export class Leaderboard {
+  constructor(state) {
+    this.sql = state.storage.sql;
+    this.last = new Map(); // pid -> last submit time (rate limit)
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS runs (
+      id INTEGER PRIMARY KEY, tag TEXT, name TEXT, score INTEGER, hits INTEGER, acc INTEGER,
+      mode TEXT, won INTEGER, opp TEXT, at INTEGER)`);
+    this.sql.exec('CREATE INDEX IF NOT EXISTS runs_mode_score ON runs (mode, score DESC)');
+  }
+  json(obj, status = 200) { return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } }); }
+
+  async fetch(req) {
+    const url = new URL(req.url);
+    if (req.method === 'GET') {
+      const mode = url.searchParams.get('mode');
+      if (!MODES.includes(mode)) return this.json({ error: 'bad mode' }, 400);
+      const runs = this.sql.exec('SELECT name, score, hits, acc, mode, won, opp, at, tag FROM runs WHERE mode = ? ORDER BY score DESC, at ASC LIMIT 20', mode).toArray();
+      return this.json({ runs });
+    }
+    if (req.method !== 'POST') return this.json({ error: 'method' }, 405);
+    const text = await req.text();
+    if (text.length > 8000) return this.json({ error: 'too big' }, 413);
+    let body;
+    try { body = JSON.parse(text); } catch (e) { return this.json({ error: 'bad json' }, 400); }
+    const pid = typeof body.pid === 'string' && /^[a-z0-9]{12,40}$/.test(body.pid) ? body.pid : null;
+    if (!pid || !Array.isArray(body.runs) || !body.runs.length || body.runs.length > 20) return this.json({ error: 'bad request' }, 400);
+    const now = Date.now();
+    if (now - (this.last.get(pid) || 0) < 15000) return this.json({ error: 'slow down' }, 429);
+    this.last.set(pid, now);
+    if (this.last.size > 5000) this.last.clear();
+    const tag = await tagOf(pid);
+    let saved = 0;
+    for (const raw of body.runs) {
+      const r = cleanRun(raw);
+      if (!r) continue;
+      // Skip an exact repeat (the same round sent twice).
+      if (this.sql.exec('SELECT 1 FROM runs WHERE tag = ? AND mode = ? AND at = ? AND score = ?', tag, r.mode, r.at, r.score).toArray().length) continue;
+      this.sql.exec('INSERT INTO runs (tag, name, score, hits, acc, mode, won, opp, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        tag, r.name, r.score, r.hits, r.acc, r.mode, r.won, r.opp, r.at);
+      saved++;
+      // Keep this player's best 5 for the mode, and the best 500 overall per mode.
+      this.sql.exec('DELETE FROM runs WHERE tag = ? AND mode = ? AND id NOT IN (SELECT id FROM runs WHERE tag = ? AND mode = ? ORDER BY score DESC, at ASC LIMIT 5)', tag, r.mode, tag, r.mode);
+      this.sql.exec('DELETE FROM runs WHERE mode = ? AND id NOT IN (SELECT id FROM runs WHERE mode = ? ORDER BY score DESC, at ASC LIMIT 500)', r.mode, r.mode);
+    }
+    return this.json({ saved, tag });
+  }
+}
 
 export class StadiumHub {
   constructor(state, env) {

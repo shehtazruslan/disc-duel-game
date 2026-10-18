@@ -9,13 +9,15 @@ A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet
 - **vs CPU** with Easy, Normal and Hard difficulty.
 - **Online 1v1.** One player clicks *Create match* and sends the 4-character code; the other clicks *Join*. Browsers connect directly with WebRTC via [PeerJS](https://peerjs.com/). Some strict networks (work, school, mobile) block direct connections.
 
-The glass walls look out on a stadium of other arenas. A few of them run CPU exhibition matches; add `?stadium=0` to the URL to turn those off. See [docs/stadium-design.md](docs/stadium-design.md) for the plan to show real online matches there.
+The glass walls look out on a stadium of other arenas. On the GitHub Pages site, other players' live matches (online or vs CPU) appear in the neighbouring cubes; cubes without a real match run CPU exhibitions. Add `?stadium=0` to the URL to turn the exhibitions off.
+
+**Stadium hub:** `stadium-hub/` is a Cloudflare Worker (deploy with `npx wrangler deploy` from that folder) that assigns cubes, relays match digests and stores the worldwide leaderboard. See [docs/stadium-design.md](docs/stadium-design.md) for the plan to show real online matches there.
 
 ## Names, stats and leaderboard
 
 - Set your name on the menu; online, your rival sees it.
 - After each round, the results screen compares both players: damage, hits, accuracy, damage per hit, best hit, bank shots, most bounces in one hit, shield reflects, and curve, Heavy and Split hits.
-- The leaderboard ranks your best rounds by damage for each mode (Easy, Normal, Hard, Online). On the GitHub Pages site it keeps the scores from this browser; inside the claude.ai artifact it is shared with everyone who can open the page.
+- The leaderboard ranks the best rounds by damage for each mode (Easy, Normal, Hard, Online). On the GitHub Pages site it is **worldwide** (stored on the stadium hub, best 5 rounds per player per mode), with a *This computer* view too; inside the claude.ai artifact it is shared with everyone who can open the page.
 
 ## Controls
 

@@ -373,7 +373,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <button type="button" role="tab" id="tab-online" data-mode="online">Online</button>
     </div>
     <div class="scope-row" id="scopeRow" hidden>
-      <label class="check" for="scopeAll"><input type="radio" name="scope" id="scopeAll" value="all" checked> Everyone</label>
+      <label class="check" for="scopeAll"><input type="radio" name="scope" id="scopeAll" value="all" checked> <span id="scopeAllLabel">Everyone</span></label>
       <label class="check" for="scopeMine"><input type="radio" name="scope" id="scopeMine" value="mine"> This computer</label>
     </div>
     <div class="board-wrap"><table class="board-table" id="boardTable"></table></div>
@@ -1727,7 +1727,60 @@ function setOppName(v) {
 // Every finished round is saved in this browser. Inside the claude.ai artifact the board is also shared:
 // each player writes only their own document (scores/<their id>) and everyone reads all of them.
 const BOARD_MODES = ['hard', 'normal', 'easy', 'online'];
-const board = { local: [], shared: null, db: null, uid: null, unsub: null, mode: 'normal', scope: 'all', note: '' };
+const board = { local: [], shared: null, db: null, uid: null, unsub: null, mode: 'normal', scope: 'all', note: '',
+  web: {}, pid: '', tag: '' };
+// On the public site the worldwide board lives on the stadium hub (the same Cloudflare server, over HTTPS).
+// A random id kept in this browser groups a player's rounds; the hub only ever shows a short tag made from it.
+try {
+  board.pid = localStorage.getItem('discduel.pid') || '';
+  if (!/^[a-z0-9]{12,40}$/.test(board.pid)) {
+    board.pid = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => (b % 36).toString(36)).join('');
+    localStorage.setItem('discduel.pid', board.pid);
+  }
+  board.tag = localStorage.getItem('discduel.tag') || '';
+} catch (e) { board.pid = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => (b % 36).toString(36)).join(''); }
+function webBase() { return typeof hub !== 'undefined' && hub.url ? hub.url.replace(/^ws/, 'http').replace(/\/ws$/, '') : null; }
+async function submitWeb(runs) {
+  const base = webBase();
+  if (!base || !runs.length) return false;
+  try {
+    // text/plain keeps this a simple request (no CORS preflight); the hub parses the JSON itself.
+    const res = await fetch(base + '/scores', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ pid: board.pid, runs }) });
+    if (!res.ok) return false;
+    const out = await res.json();
+    if (out && typeof out.tag === 'string' && /^[0-9a-f]{12}$/.test(out.tag)) {
+      board.tag = out.tag;
+      try { localStorage.setItem('discduel.tag', out.tag); } catch (e) { /* storage unavailable */ }
+    }
+    for (const m of BOARD_MODES) delete board.web[m];
+    return true;
+  } catch (e) { return false; }
+}
+async function loadWeb(mode) {
+  const base = webBase();
+  if (!base) return;
+  const c = board.web[mode];
+  if (c && (c.loading || Date.now() - c.at < 15000)) return;
+  board.web[mode] = { loading: true, at: Date.now(), runs: c ? c.runs : null, error: false };
+  try {
+    const res = await fetch(base + '/scores?mode=' + mode);
+    const out = await res.json();
+    const runs = Array.isArray(out.runs) ? out.runs.slice(0, 20).map(r => Object.assign(cleanRun(r), { mine: !!board.tag && r.tag === board.tag })) : [];
+    board.web[mode] = { loading: false, at: Date.now(), runs, error: false };
+  } catch (e) {
+    board.web[mode] = { loading: false, at: Date.now(), runs: null, error: true };
+  }
+  if (!ui.board.hidden && board.mode === mode) renderBoard();
+}
+// The first time this browser reaches the worldwide board, send up its best local rounds.
+function syncLocalBests() {
+  if (!webBase()) return;
+  try { if (localStorage.getItem('discduel.synced') === '1') return; } catch (e) { return; }
+  const runs = [];
+  for (const m of BOARD_MODES) runs.push(...topRuns(board.local.filter(r => r.mode === m && r.hits > 0), 5));
+  if (!runs.length) { try { localStorage.setItem('discduel.synced', '1'); } catch (e) {} return; }
+  submitWeb(runs.slice(0, 20)).then(ok => { if (ok) { try { localStorage.setItem('discduel.synced', '1'); } catch (e) {} } });
+}
 try {
   const saved = JSON.parse(localStorage.getItem('discduel.board') || '[]');
   if (Array.isArray(saved)) board.local = saved.filter(r => r && typeof r.score === 'number' && BOARD_MODES.includes(r.mode));
@@ -1749,6 +1802,7 @@ async function recordRun(run) {
   try { localStorage.setItem('discduel.board', JSON.stringify(board.local)); } catch (e) { /* storage unavailable */ }
   const rank = topRuns(board.local.filter(r => r.mode === run.mode), 1000).indexOf(board.local.find(r => r === run)) + 1;
   $('resNote').textContent = run.score > bestBefore ? 'New personal best for ' + modeName(run.mode) + '!' : rank > 0 && rank <= 10 ? '#' + rank + ' on this computer for ' + modeName(run.mode) : '';
+  if (webBase()) submitWeb([run]).then(ok => { if (!ok) board.note = 'Could not reach the worldwide leaderboard; this round is saved on this computer.'; });
   if (board.db && board.uid) {
     try {
       const ref = board.db.doc('scores/' + board.uid);
@@ -1788,11 +1842,21 @@ function modeName(m) { return m === 'online' ? 'online matches' : m[0].toUpperCa
 })();
 function renderBoard() {
   for (const m of BOARD_MODES) $('tab-' + m).setAttribute('aria-selected', String(board.mode === m));
-  const sharedOn = !!board.db;
-  $('scopeRow').hidden = !sharedOn;
-  const useShared = sharedOn && board.scope === 'all';
-  $('boardEyebrow').textContent = useShared ? 'Everyone with access to this page' : 'Best rounds on this computer';
-  const source = useShared ? (board.shared || []) : board.local.map(r => Object.assign({}, r, { mine: true }));
+  const web = !!webBase(), remote = web || !!board.db;
+  $('scopeRow').hidden = !remote;
+  $('scopeAllLabel').textContent = web ? 'Worldwide' : 'Everyone';
+  const useRemote = remote && board.scope === 'all';
+  let source, status = '';
+  if (useRemote && web) {
+    loadWeb(board.mode);
+    const c = board.web[board.mode] || {};
+    source = c.runs || [];
+    if (!c.runs) status = c.error ? 'Could not reach the worldwide leaderboard. Try again in a moment, or switch to This computer.' : 'Loading scores…';
+  } else if (useRemote) {
+    source = board.shared || [];
+    if (!board.shared) status = 'Loading scores…';
+  } else source = board.local.map(r => Object.assign({}, r, { mine: true }));
+  $('boardEyebrow').textContent = useRemote ? (web ? 'Worldwide best rounds' : 'Everyone with access to this page') : 'Best rounds on this computer';
   const rows = topRuns(source.filter(r => r.mode === board.mode), 20);
   const t = $('boardTable');
   t.textContent = '';
@@ -1802,16 +1866,16 @@ function renderBoard() {
   }
   if (!rows.length) {
     const td = t.insertRow().insertCell(); td.colSpan = 7; td.className = 'empty';
-    td.textContent = useShared && !board.shared ? 'Loading scores…' : 'No rounds yet for ' + modeName(board.mode) + '. Finish one to get on the board.';
+    td.textContent = status || 'No rounds yet for ' + modeName(board.mode) + '. Finish one to get on the board.';
   }
   rows.forEach((r, i) => {
     const tr = t.insertRow();
-    if (r.mine && useShared) tr.className = 'me';
+    if (r.mine && useRemote) tr.className = 'me';
     const vals = [[i + 1, 'rank'], [r.name, 'name'], [r.score, 'num'], [r.hits, 'num'], [r.acc + '%', 'num'],
       [(r.won ? 'Won' : 'Lost') + ' vs ' + r.opp, ''], [r.at ? new Date(r.at).toLocaleDateString() : '', '']];
     for (const [v, cls] of vals) { const td = tr.insertCell(); td.textContent = String(v); if (cls) td.className = cls; }
   });
-  $('boardNote').textContent = board.note || (useShared ? 'Each player keeps their best 5 rounds per mode on the shared board.' : sharedOn ? '' : 'Scores are saved in this browser.');
+  $('boardNote').textContent = board.note || (useRemote ? 'Each player keeps their best 5 rounds per mode.' : remote ? '' : 'Scores are saved in this browser.');
 }
 function openBoard() {
   renderBoard();
@@ -2782,7 +2846,7 @@ function stadiumUpdate(dt) {
 // Phase 1 of docs/stadium-design.md, on the public site only (the claude.ai sandbox can't reach the hub).
 // The host of each match (or the player in a CPU game) gets a cube from the hub and sends a ~10 Hz digest;
 // every page draws the matches around its own cube. If the hub is down, the CPU exhibitions stay.
-const HUB_DEFAULT = '';
+const HUB_DEFAULT = 'wss://disc-duel-stadium.w-shehtaz.workers.dev/ws';
 const hub = { url: null, ws: null, open: false, mySlot: null, sent: '', lastDigest: 0, retry: 0, retryAt: 0,
   cpuMatch: 'cpu-' + Math.random().toString(36).slice(2, 10), hitSeq: 0, lastHit: [0, 0, 0, 0], views: [] };
 {
@@ -2791,6 +2855,7 @@ const hub = { url: null, ws: null, open: false, mySlot: null, sent: '', lastDige
   else if (HUB_DEFAULT && location.protocol === 'https:' && !(window.claude && window.claude.use)) hub.url = HUB_DEFAULT;
 }
 const okSlot = s => Array.isArray(s) && s.length === 3 && s.every(v => Number.isInteger(v) && Math.abs(v) <= 3);
+setTimeout(syncLocalBests, 1500);
 function hubConnect() {
   if (!hub.url || hub.ws || performance.now() < hub.retryAt) return;
   let ws;
