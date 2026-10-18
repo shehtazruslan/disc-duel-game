@@ -586,30 +586,44 @@ function makeDiscMesh(color) {
   return g;
 }
 
-function makeFighterMesh(color) {
+// Body builds by difficulty: Easy is the original wide figure, Hard a slim human one.
+// hitR / hitTop are the hitbox (radius around the body's centre line, and its top above the feet).
+const BUILDS = {
+  easy: { torsoTop: 0.42, torsoBot: 0.3, torsoH: 0.95, torsoY: 1.3, hipR: 0.31, hipY: 0.78, headR: 0.27, headY: 2.0, headOval: 1,
+    collarR: 0.3, collarY: 1.76, beltR: 0.31, beltY: 0.9, armX: 0.5, shoulderY: 1.7, armTop: 0.1, armBot: 0.08, armLen: 0.85,
+    legX: 0.16, hipJointY: 0.72, legTop: 0.12, legBot: 0.1, legLen: 0.72, depth: 1, neck: false, feet: false, backZ: 0.42, hitR: 0.6, hitTop: 1.8 },
+  normal: { torsoTop: 0.33, torsoBot: 0.23, torsoH: 0.82, torsoY: 1.33, hipR: 0.25, hipY: 0.86, headR: 0.22, headY: 2.0, headOval: 1.1,
+    collarR: 0.22, collarY: 1.73, beltR: 0.24, beltY: 0.95, armX: 0.4, shoulderY: 1.68, armTop: 0.08, armBot: 0.06, armLen: 0.82,
+    legX: 0.13, hipJointY: 0.82, legTop: 0.1, legBot: 0.07, legLen: 0.82, depth: 0.85, neck: true, feet: true, backZ: 0.32, hitR: 0.5, hitTop: 1.9 },
+  hard: { torsoTop: 0.27, torsoBot: 0.17, torsoH: 0.72, torsoY: 1.4, hipR: 0.19, hipY: 0.98, headR: 0.17, headY: 2.06, headOval: 1.15,
+    collarR: 0.16, collarY: 1.76, beltR: 0.18, beltY: 1.06, armX: 0.32, shoulderY: 1.72, armTop: 0.065, armBot: 0.045, armLen: 0.8,
+    legX: 0.1, hipJointY: 0.95, legTop: 0.085, legBot: 0.055, legLen: 0.93, depth: 0.72, neck: true, feet: true, backZ: 0.26, hitR: 0.4, hitTop: 2.0 },
+};
+function makeFighterMesh(color, B = BUILDS.easy) {
   const g = new THREE.Group();
   const body = new THREE.MeshStandardMaterial({ color: 0x0b111b, metalness: 0.6, roughness: 0.35, emissive: 0x000000 });
   const glow = new THREE.MeshBasicMaterial({ color });
   const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
-  add(new THREE.CylinderGeometry(0.42, 0.3, 0.95, 16), body, 0, 1.3, 0);
-  add(new THREE.CylinderGeometry(0.31, 0.29, 0.26, 16), body, 0, 0.78, 0);
-  add(new THREE.SphereGeometry(0.27, 20, 14), body, 0, 2.0, 0);
-  add(new THREE.BoxGeometry(0.36, 0.07, 0.1), glow, 0, 2.01, -0.22);
-  const belt = add(new THREE.TorusGeometry(0.31, 0.03, 6, 32), glow, 0, 0.9, 0);
-  belt.rotation.x = Math.PI / 2;
-  const collar = add(new THREE.TorusGeometry(0.3, 0.025, 6, 32), glow, 0, 1.76, 0);
-  collar.rotation.x = Math.PI / 2;
-  add(new THREE.BoxGeometry(0.05, 0.75, 0.04), glow, 0, 1.32, -0.37).rotation.x = -0.12;
+  add(new THREE.CylinderGeometry(B.torsoTop, B.torsoBot, B.torsoH, 16), body, 0, B.torsoY, 0).scale.z = B.depth;
+  add(new THREE.CylinderGeometry(B.hipR, B.hipR * 0.94, 0.26, 16), body, 0, B.hipY, 0).scale.z = B.depth;
+  if (B.neck) add(new THREE.CylinderGeometry(B.headR * 0.42, B.headR * 0.48, 0.18, 10), body, 0, B.collarY + 0.08, 0);
+  add(new THREE.SphereGeometry(B.headR, 20, 14), body, 0, B.headY, 0).scale.y = B.headOval;
+  add(new THREE.BoxGeometry(B.headR * 1.33, 0.07 * B.headR / 0.27 + 0.02, 0.1), glow, 0, B.headY + 0.01, -B.headR * 0.82);
+  const belt = add(new THREE.TorusGeometry(B.beltR, 0.03, 6, 32), glow, 0, B.beltY, 0);
+  belt.rotation.x = Math.PI / 2; belt.scale.y = B.depth;
+  const collar = add(new THREE.TorusGeometry(B.collarR, 0.025, 6, 32), glow, 0, B.collarY, 0);
+  collar.rotation.x = Math.PI / 2; collar.scale.y = B.depth;
+  add(new THREE.BoxGeometry(0.05, B.torsoH * 0.79, 0.04), glow, 0, B.torsoY + 0.02, -B.torsoTop * 0.88 * B.depth).rotation.x = -0.12;
   // Arms pivot at the shoulder so they can wind up and swing; +x is the throwing (right) side.
   const arms = [];
   for (const s of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(s * 0.5, 1.7, 0);
+    shoulder.position.set(s * B.armX, B.shoulderY, 0);
     shoulder.rotation.z = s * 0.12;
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.08, 0.85, 10), body);
-    arm.position.y = -0.43;
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.6, 0.03), glow);
-    stripe.position.set(s * 0.07, -0.43, -0.06);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(B.armTop, B.armBot, B.armLen, 10), body);
+    arm.position.y = -B.armLen / 2;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, B.armLen * 0.7, 0.03), glow);
+    stripe.position.set(s * B.armTop * 0.7, -B.armLen / 2, -B.armTop * 0.6);
     shoulder.add(arm, stripe);
     g.add(shoulder);
     arms.push(shoulder);
@@ -617,7 +631,7 @@ function makeFighterMesh(color) {
   const handDisc = makeDiscMesh(color);
   // Face along the arm's z axis, so at full wind-up the disc lies almost flat above the shoulder.
   handDisc.rotation.x = Math.PI / 2;
-  handDisc.position.set(0.05, -0.92, -0.15);
+  handDisc.position.set(0.05, -B.armLen - 0.07, -0.15);
   handDisc.scale.setScalar(0.75);
   handDisc.visible = false;
   arms[1].add(handDisc);
@@ -625,18 +639,23 @@ function makeFighterMesh(color) {
   const legs = [];
   for (const s of [-1, 1]) {
     const hip = new THREE.Group();
-    hip.position.set(s * 0.16, 0.72, 0);
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.72, 10), body);
-    leg.position.y = -0.36;
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.55, 0.03), glow);
-    stripe.position.set(s * 0.11, -0.36, 0);
+    hip.position.set(s * B.legX, B.hipJointY, 0);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(B.legTop, B.legBot, B.legLen, 10), body);
+    leg.position.y = -B.legLen / 2;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, B.legLen * 0.76, 0.03), glow);
+    stripe.position.set(s * B.legTop * 0.9, -B.legLen / 2, 0);
     hip.add(leg, stripe);
+    if (B.feet) {
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(B.legBot * 2.2, 0.07, 0.24), body);
+      foot.position.set(0, -B.legLen + 0.02, -0.05);
+      hip.add(foot);
+    }
     g.add(hip);
     legs.push(hip);
   }
   const backDisc = makeDiscMesh(color);
   backDisc.rotation.x = Math.PI / 2;
-  backDisc.position.set(0, 1.35, 0.42);
+  backDisc.position.set(0, B.torsoY + 0.05, B.backZ);
   backDisc.scale.setScalar(0.75);
   g.add(backDisc);
   const shield = new THREE.Mesh(new THREE.CircleGeometry(1.0, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -645,13 +664,21 @@ function makeFighterMesh(color) {
   shield.add(shieldRim);
   g.add(shield);
   scene.add(g);
-  // foot ring + blob shadow
-  const foot = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+  // Foot ring + blob shadow, sized to the hitbox so you can read it at a glance.
+  const foot = new THREE.Mesh(new THREE.RingGeometry(B.hitR + 0.02, B.hitR + 0.12, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
   foot.rotation.x = -Math.PI / 2;
-  const blob = new THREE.Mesh(new THREE.CircleGeometry(0.62, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }));
+  const blob = new THREE.Mesh(new THREE.CircleGeometry(B.hitR + 0.02, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }));
   blob.rotation.x = -Math.PI / 2;
   scene.add(foot, blob);
   return { group: g, body, legs, armL: arms[0], armR: arms[1], handDisc, backDisc, shield, shieldRim, foot, blob, tilt: 0 };
+}
+// Swap a fighter's body (and hitbox) for another build.
+function setBuild(f, key) {
+  if (!BUILDS[key] || f.build === key) return;
+  const old = f.mesh;
+  for (const o of [old.group, old.foot, old.blob]) { scene.remove(o); o.traverse(x => { if (x.geometry) x.geometry.dispose(); }); }
+  f.mesh = makeFighterMesh(f.color, BUILDS[key]);
+  f.build = key; f.hitR = BUILDS[key].hitR; f.hitTop = BUILDS[key].hitTop;
 }
 
 function makeDisc(owner, color) {
@@ -681,7 +708,7 @@ function makeDisc(owner, color) {
 
 function makeFighter(name, color, isCPU) {
   const f = {
-    name, color, isCPU, mesh: makeFighterMesh(color),
+    name, color, isCPU, mesh: makeFighterMesh(color, BUILDS.normal), build: 'normal', hitR: BUILDS.normal.hitR, hitTop: BUILDS.normal.hitTop,
     pos: new V3(), vel: new V3(), wish: new V3(), dashDir: new V3(),
     yaw: 0, pitch: 0, onGround: true, dashT: 0, dashCd: 0, blockT: 0, blockCd: 0, invuln: 0, flash: 0, walk: 0,
     charging: false, chargeT: 0, throwAnim: 0, slideT: 0, slideCd: 0, slideDir: new V3(), airDash: false, dashAir: false, wallJumpCd: 0,
@@ -872,7 +899,7 @@ function handPos(f, out) {
 function other(f) { return f === player ? cpu : player; }
 function distToFighter(p, f) {
   // A sliding fighter is low enough for a disc to pass over.
-  const y = clamp(p.y, f.pos.y + 0.35, f.pos.y + (f.slideT > 0 ? 1.0 : 1.8));
+  const y = clamp(p.y, f.pos.y + 0.35, f.pos.y + (f.slideT > 0 ? 1.0 : f.hitTop));
   return Math.hypot(p.x - f.pos.x, p.y - y, p.z - f.pos.z);
 }
 function inFront(f, p) {
@@ -1090,7 +1117,7 @@ function updateDisc(d, dt) {
       const dist = distToFighter(d.pos, victim);
       // A Heavy disc can't be reflected: it goes straight through the shield.
       if (victim.blockT > 0 && d.state === 'flying' && d.kind !== 'heavy' && dist < 1.8 && inFront(victim, d.pos)) deflect(d, victim);
-      else if (dist < PLAYER_R + (d.kind === 'heavy' ? HEAVY_R : DISC_R)) { hit(d, victim); }
+      else if (dist < victim.hitR + (d.kind === 'heavy' ? HEAVY_R : DISC_R)) { hit(d, victim); }
     }
   }
   if (d.state === 'flying' && d.life > 4.5) startReturn(d);
@@ -1159,7 +1186,7 @@ function updateShards(dt) {
         netFx('r', sh.pos, tmp3, v);
         sfx('block', sh.pos);
         gone = true;
-      } else if (dist < PLAYER_R + SHARD_R) {
+      } else if (dist < v.hitR + SHARD_R) {
         sh.credit.splitHits++;
         applyHit(v, sh.credit, SHARD_DMG, 'SPLIT', sh.vel, 7, false);
         gone = true;
@@ -1658,6 +1685,8 @@ function startRound() {
   floats.length = 0;
   resetFighter(player, 10, 0);
   resetFighter(cpu, -10, Math.PI);
+  // Both fighters take the chosen difficulty's build (and its hitbox).
+  setBuild(player, state.diff); setBuild(cpu, state.diff);
   state.time = ROUND; state.mode = 'playing'; state.hurt = 0;
   ui.diffLabel.textContent = state.diff + ' CPU';
   show('playing');
@@ -1675,6 +1704,7 @@ function resume() { state.mode = 'playing'; show('playing'); lock(); }
 function toMenu() {
   state.mode = 'menu'; show('menu'); unlock();
   resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI);
+  setBuild(player, state.diff); setBuild(cpu, state.diff);
 }
 function endRound() {
   cancelCharge(player);
@@ -1779,7 +1809,7 @@ function syncLocalBests() {
   if (!webBase()) return;
   try { if (localStorage.getItem('discduel.synced') === '1') return; } catch (e) { return; }
   const runs = [];
-  for (const m of BOARD_MODES) runs.push(...topRuns(board.local.filter(r => r.mode === m && r.hits > 0), 5));
+  for (const m of BOARD_MODES) runs.push(...topRuns(board.local.filter(r => r.mode === m && r.hits > 0), 1));
   if (!runs.length) { try { localStorage.setItem('discduel.synced', '1'); } catch (e) {} return; }
   submitWeb(runs.slice(0, 20)).then(ok => { if (ok) { try { localStorage.setItem('discduel.synced', '1'); } catch (e) {} } });
 }
@@ -1810,9 +1840,9 @@ async function recordRun(run) {
       const ref = board.db.doc('scores/' + board.uid);
       const snap = await ref.get();
       const old = snap.exists && Array.isArray((snap.data() || {}).runs) ? snap.data().runs.map(cleanRun) : [];
-      // Keep each player's best few per mode so the shared board stays small.
+      // One entry per mode on the shared board: this player's best round.
       const keep = [];
-      for (const m of BOARD_MODES) keep.push(...topRuns(old.concat([run]).filter(r => r.mode === m), 5));
+      for (const m of BOARD_MODES) keep.push(...topRuns(old.concat([run]).filter(r => r.mode === m), 1));
       await ref.set({ name: run.name, runs: keep });
       board.note = '';
     } catch (e) {
@@ -1835,7 +1865,9 @@ function modeName(m) { return m === 'online' ? 'online matches' : m[0].toUpperCa
       const all = [];
       for (const d of snap.docs) {
         const body = d.data() || {};
-        if (Array.isArray(body.runs)) for (const r of body.runs.slice(0, 40)) all.push(Object.assign(cleanRun(r), { mine: d.id === board.uid }));
+        if (!Array.isArray(body.runs)) continue;
+        const runs = body.runs.slice(0, 40).map(cleanRun);
+        for (const m of BOARD_MODES) for (const r of topRuns(runs.filter(x => x.mode === m), 1)) all.push(Object.assign(r, { mine: d.id === board.uid }));
       }
       board.shared = all;
       if (!ui.board.hidden) renderBoard();
@@ -1857,7 +1889,12 @@ function renderBoard() {
   } else if (useRemote) {
     source = board.shared || [];
     if (!board.shared) status = 'Loading scores…';
-  } else source = board.local.map(r => Object.assign({}, r, { mine: true }));
+  } else {
+    // One row per name here too: each name's best round.
+    const best = new Map();
+    for (const r of topRuns(board.local, board.local.length)) { const k = r.mode + '|' + r.name; if (!best.has(k)) best.set(k, r); }
+    source = [...best.values()].map(r => Object.assign({}, r, { mine: true }));
+  }
   $('boardEyebrow').textContent = useRemote ? (web ? 'Worldwide best rounds' : 'Everyone with access to this page') : 'Best rounds on this computer';
   const rows = topRuns(source.filter(r => r.mode === board.mode), 20);
   const t = $('boardTable');
@@ -1877,7 +1914,7 @@ function renderBoard() {
       [(r.won ? 'Won' : 'Lost') + ' vs ' + r.opp, ''], [r.at ? new Date(r.at).toLocaleDateString() : '', '']];
     for (const [v, cls] of vals) { const td = tr.insertCell(); td.textContent = String(v); if (cls) td.className = cls; }
   });
-  $('boardNote').textContent = board.note || (useRemote ? 'Each player keeps their best 5 rounds per mode.' : remote ? '' : 'Scores are saved in this browser.');
+  $('boardNote').textContent = board.note || (useRemote ? 'Each player appears once per mode, with their best round.' : remote ? '' : 'Scores are saved in this browser.');
 }
 function openBoard() {
   renderBoard();
@@ -2096,6 +2133,7 @@ document.addEventListener('pointerlockchange', () => {
 });
 document.querySelectorAll('.diff button').forEach(b => b.addEventListener('click', () => {
   state.diff = b.dataset.diff;
+  setBuild(player, state.diff); setBuild(cpu, state.diff);
   document.querySelectorAll('.diff button').forEach(o => o.setAttribute('aria-checked', String(o === b)));
 }));
 $('startBtn').addEventListener('click', startRound);
@@ -2335,6 +2373,8 @@ function beginOnlineRound() {
   floats.length = 0;
   if (net.role === 'host') { resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI); }
   else { resetFighter(player, -10, Math.PI); resetFighter(cpu, 10, 0); }
+  // Online, both players use the slim Hard build, so neither has a bigger hitbox.
+  setBuild(player, 'hard'); setBuild(cpu, 'hard');
   state.time = ROUND; state.hurt = 0; state.mode = 'playing';
   ui.diffLabel.textContent = 'Online · ' + net.code;
   $('cpuTag').textContent = net.oppName || 'RIVAL';

@@ -59,7 +59,7 @@ export default {
 // ---------- Worldwide leaderboard ----------
 // GET  /scores?mode=hard          → { runs: [{ name, score, hits, acc, mode, won, opp, at, tag }] } top 20
 // POST /scores  { pid, runs: [...] } (1–20 runs, e.g. a player's old local bests the first time)
-// Each player (a random id kept in their browser) keeps their best 5 rounds per mode.
+// Each player (a random id kept in their browser) has one entry per mode: their best round.
 // Scores come from players' browsers, so they're checked for sense, not proven.
 const MODES = ['hard', 'normal', 'easy', 'online'];
 const PURGE_TAGS = ['211187dfd1e5'];
@@ -89,6 +89,8 @@ export class Leaderboard {
     this.sql.exec('CREATE INDEX IF NOT EXISTS runs_mode_score ON runs (mode, score DESC)');
     // Rows from development test browsers that reached the live board by mistake.
     for (const tag of PURGE_TAGS) this.sql.exec('DELETE FROM runs WHERE tag = ?', tag);
+    // One entry per player per mode: drop anything below each player's best (rows from when it kept five).
+    this.sql.exec('DELETE FROM runs WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY tag, mode ORDER BY score DESC, at ASC) AS n FROM runs) WHERE n = 1)');
   }
   json(obj, status = 200) { return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -121,8 +123,8 @@ export class Leaderboard {
       this.sql.exec('INSERT INTO runs (tag, name, score, hits, acc, mode, won, opp, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         tag, r.name, r.score, r.hits, r.acc, r.mode, r.won, r.opp, r.at);
       saved++;
-      // Keep this player's best 5 for the mode, and the best 500 overall per mode.
-      this.sql.exec('DELETE FROM runs WHERE tag = ? AND mode = ? AND id NOT IN (SELECT id FROM runs WHERE tag = ? AND mode = ? ORDER BY score DESC, at ASC LIMIT 5)', tag, r.mode, tag, r.mode);
+      // Keep only this player's best round for the mode, and the best 500 players overall per mode.
+      this.sql.exec('DELETE FROM runs WHERE tag = ? AND mode = ? AND id NOT IN (SELECT id FROM runs WHERE tag = ? AND mode = ? ORDER BY score DESC, at ASC LIMIT 1)', tag, r.mode, tag, r.mode);
       this.sql.exec('DELETE FROM runs WHERE mode = ? AND id NOT IN (SELECT id FROM runs WHERE mode = ? ORDER BY score DESC, at ASC LIMIT 500)', r.mode, r.mode);
     }
     return this.json({ saved, tag });

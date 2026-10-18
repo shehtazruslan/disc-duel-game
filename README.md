@@ -6,7 +6,7 @@ A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet
 
 ## Modes
 
-- **vs CPU** with Easy, Normal and Hard difficulty.
+- **vs CPU** with Easy, Normal and Hard difficulty. Both fighters take the difficulty's build: wide on Easy, slimmer on Normal, a slim human on Hard, with a hitbox that matches (smaller on harder levels). Online matches use the Hard build.
 - **Online 1v1.** One player clicks *Create match* and sends the 4-character code; the other clicks *Join*. Browsers connect directly with WebRTC via [PeerJS](https://peerjs.com/). Some strict networks (work, school, mobile) block direct connections.
 
 The glass walls look out on a stadium of other arenas. On the GitHub Pages site, other players' live matches (online or vs CPU) appear in the neighbouring cubes; cubes without a real match run CPU exhibitions. Add `?stadium=0` to the URL to turn the exhibitions off.
@@ -17,7 +17,7 @@ The glass walls look out on a stadium of other arenas. On the GitHub Pages site,
 
 - Set your name on the menu; online, your rival sees it.
 - After each round, the results screen compares both players: damage, hits, accuracy, damage per hit, best hit, bank shots, most bounces in one hit, shield reflects, and curve, Heavy and Split hits.
-- The leaderboard ranks the best rounds by damage for each mode (Easy, Normal, Hard, Online). On the GitHub Pages site it is **worldwide** (stored on the stadium hub, best 5 rounds per player per mode), with a *This computer* view too; inside the claude.ai artifact it is shared with everyone who can open the page.
+- The leaderboard ranks the best rounds by damage for each mode (Easy, Normal, Hard, Online). On the GitHub Pages site it is **worldwide** (stored on the stadium hub; each player appears once per mode with their best round), with a *This computer* view too; inside the claude.ai artifact it is shared with everyone who can open the page.
 
 ## Controls
 
