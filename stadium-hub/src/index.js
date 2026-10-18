@@ -62,6 +62,7 @@ export default {
 // Each player (a random id kept in their browser) keeps their best 5 rounds per mode.
 // Scores come from players' browsers, so they're checked for sense, not proven.
 const MODES = ['hard', 'normal', 'easy', 'online'];
+const PURGE_TAGS = ['211187dfd1e5'];
 const cleanName = v => String(v || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
 function cleanRun(r) {
   if (!r || typeof r !== 'object') return null;
@@ -86,6 +87,8 @@ export class Leaderboard {
       id INTEGER PRIMARY KEY, tag TEXT, name TEXT, score INTEGER, hits INTEGER, acc INTEGER,
       mode TEXT, won INTEGER, opp TEXT, at INTEGER)`);
     this.sql.exec('CREATE INDEX IF NOT EXISTS runs_mode_score ON runs (mode, score DESC)');
+    // Rows from development test browsers that reached the live board by mistake.
+    for (const tag of PURGE_TAGS) this.sql.exec('DELETE FROM runs WHERE tag = ?', tag);
   }
   json(obj, status = 200) { return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } }); }
 

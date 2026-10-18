@@ -1740,9 +1740,11 @@ try {
   board.tag = localStorage.getItem('discduel.tag') || '';
 } catch (e) { board.pid = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => (b % 36).toString(36)).join(''); }
 function webBase() { return typeof hub !== 'undefined' && hub.url ? hub.url.replace(/^ws/, 'http').replace(/\/ws$/, '') : null; }
+// Test pages (plain http on this computer) only ever send scores to a local test hub, never the live board.
+function canSubmit() { return location.protocol === 'https:' || /^ws:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(hub.url || ''); }
 async function submitWeb(runs) {
   const base = webBase();
-  if (!base || !runs.length) return false;
+  if (!base || !runs.length || !canSubmit()) return false;
   try {
     // text/plain keeps this a simple request (no CORS preflight); the hub parses the JSON itself.
     const res = await fetch(base + '/scores', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ pid: board.pid, runs }) });
