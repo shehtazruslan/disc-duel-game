@@ -1,6 +1,6 @@
 # Disc Duel
 
-A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the two-minute clock runs out.
+A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the 90-second clock runs out.
 
 **Play:** open `index.html` in a browser, or visit the GitHub Pages site for this repository.
 

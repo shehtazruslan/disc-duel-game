@@ -234,7 +234,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 <div id="hud" hidden>
   <div class="hud-top">
     <div class="side you"><span class="tag" id="youTag">YOU</span><span class="dmg" id="youDmg">0</span><span class="sub"><span id="youHits">0</span> hits</span></div>
-    <div class="clock"><span id="clock">2:00</span><span class="sub" id="diffLabel">Normal CPU</span></div>
+    <div class="clock"><span id="clock">1:30</span><span class="sub" id="diffLabel">Normal CPU</span></div>
     <div class="side cpu"><span class="tag" id="cpuTag">CPU</span><span class="dmg" id="cpuDmg">0</span><span class="sub"><span id="cpuHits">0</span> hits</span></div>
   </div>
   <div id="crosshair">
@@ -258,7 +258,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
   <div class="panel">
     <p class="eyebrow">1v1 · 22 × 32 m arena · 9 m walls · discs ricochet</p>
     <h1>Disc Duel</h1>
-    <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the two-minute clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
+    <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the 90-second clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
     <label class="name-field" for="playerName">Your name <input id="playerName" maxlength="16" placeholder="Player" autocomplete="nickname" spellcheck="false"></label>
     <div class="diff" role="radiogroup" aria-label="CPU difficulty">
       <button type="button" role="radio" id="diff-easy" data-diff="easy" aria-checked="false">Easy</button>
@@ -428,7 +428,7 @@ const SHARD_DMG = 8, SHARD_LIFE = 1.3, SHARD_SPREAD = 0.45, SHARD_R = 0.3;
 // Per-round stats beyond damage/hits/throws/banks/reflects, shown on the results screen.
 const EXTRA_STATS = ['best', 'maxBounce', 'blocks', 'heavyHits', 'splitHits', 'curveHits'];
 const ALL_STATS = ['dmg', 'hits', 'throws', 'banks', 'reflects'].concat(EXTRA_STATS);
-const BLOCK_T = 0.4, BLOCK_CD = 1.0, INVULN = 0.5, ROUND = 120;
+const BLOCK_T = 0.4, BLOCK_CD = 1.0, INVULN = 0.5, ROUND = 90;
 const DIFF = {
   easy:   { react: 0.22, aimErr: 0.09,  blockP: 0.12, dodgeP: 0.35, throwDelay: [1.4, 2.6], bankP: 0.15, chargeMax: 0.25, slideP: 0.15, specialP: 0.1 },
   normal: { react: 0.36, aimErr: 0.045, blockP: 0.3,  dodgeP: 0.6,  throwDelay: [1.0, 2.0], bankP: 0.35, chargeMax: 0.6,  slideP: 0.3, specialP: 0.25 },
@@ -494,6 +494,8 @@ if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
 }
 
 // Grid cells stay square on every face: floor/ceiling are ARENA_X×ARENA_Z, the long walls ARENA_Z×CEIL, the end walls ARENA_X×CEIL.
+// The fine grid between the big lines. Off: the surfaces read as large glass panes. Set true to bring it back.
+const MINOR_GRID = false;
 // `fill` sets the panel between the lines: solid for the floor, nearly clear for glass.
 function gridTexture(wUnits, hUnits, fill = '#04070e') {
   const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
@@ -505,6 +507,7 @@ function gridTexture(wUnits, hUnits, fill = '#04070e') {
   const cell = 1.375 * ppu;
   const line = (i, vertical) => {
     const major = i % 4 === 0;
+    if (!major && !MINOR_GRID) return;
     g.strokeStyle = major ? '#1d6a94' : '#0e2b42';
     g.lineWidth = major ? 4 : 2;
     g.beginPath();
