@@ -356,7 +356,7 @@ document.getElementById('stage').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x02040a);
-scene.fog = new THREE.Fog(0x02040a, 22, 55);
+scene.fog = new THREE.Fog(0x02040a, 28, 120);
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 200);
 
 let composer = null, bloom = null;
@@ -370,12 +370,13 @@ if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
 }
 
 // Grid cells stay square on every face: floor/ceiling are ARENA×ARENA, walls ARENA×CEIL.
-function gridTexture(wUnits, hUnits) {
+// `fill` sets the panel between the lines: solid for the floor, nearly clear for glass.
+function gridTexture(wUnits, hUnits, fill = '#04070e') {
   const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.fillStyle = '#04070e';
+  g.fillStyle = fill;
   g.fillRect(0, 0, W, H);
   const cell = 1.375 * ppu;
   const line = (i, vertical) => {
@@ -396,14 +397,43 @@ function gridTexture(wUnits, hUnits) {
   return t;
 }
 const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, side: THREE.BackSide });
-const wallMat = roomMat(gridTexture(ARENA, CEIL)), flatMat = roomMat(gridTexture(ARENA, ARENA));
-// BoxGeometry face order: +x, -x, +y, -y, +z, -z
-const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA, CEIL, ARENA), [wallMat, wallMat, flatMat, flatMat, wallMat, wallMat]);
+// Walls and ceiling are glass: neon lines stay bright, the panels between them let you see out.
+const glassMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, side: THREE.BackSide, transparent: true, depthWrite: false });
+const GLASS_FILL = 'rgba(6, 14, 26, 0.28)';
+const wallMat = glassMat(gridTexture(ARENA, CEIL, GLASS_FILL)), ceilMat = glassMat(gridTexture(ARENA, ARENA, GLASS_FILL));
+const floorMat = roomMat(gridTexture(ARENA, ARENA));
+// BoxGeometry face order: +x, -x, +y (ceiling), -y (floor), +z, -z
+const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA, CEIL, ARENA), [wallMat, wallMat, ceilMat, floorMat, wallMat, wallMat]);
 room.position.y = CEIL / 2;
 scene.add(room);
 const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA - 0.02, CEIL - 0.02, ARENA - 0.02)), new THREE.LineBasicMaterial({ color: 0x8fe8ff }));
 edges.position.y = CEIL / 2;
 scene.add(edges);
+// Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass.
+// Decoration for now; they could later host other live matches.
+{
+  const GAP_X = ARENA + 10, GAP_Y = CEIL + 8;
+  const ring = new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA, CEIL, ARENA)).attributes.position.array;
+  const pts = [], spots = [];
+  for (let ix = -2; ix <= 2; ix++) for (let iy = -1; iy <= 1; iy++) for (let iz = -2; iz <= 2; iz++) {
+    if (!ix && !iy && !iz) continue;
+    const ox = ix * GAP_X, oy = iy * GAP_Y, oz = iz * GAP_X;
+    for (let i = 0; i < ring.length; i += 3) pts.push(ring[i] + ox, ring[i + 1] + oy + CEIL / 2, ring[i + 2] + oz);
+    spots.push([ox, oy + 0.01, oz]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x1c5f82, transparent: true, opacity: 0.55 })));
+  const floorTex = gridTexture(ARENA, ARENA, 'rgba(0, 0, 0, 0)');
+  const floors = new THREE.InstancedMesh(
+    new THREE.PlaneGeometry(ARENA, ARENA).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: floorTex, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+    spots.length
+  );
+  const mtx = new THREE.Matrix4();
+  spots.forEach((s, i) => floors.setMatrixAt(i, mtx.makeTranslation(s[0], s[1], s[2])));
+  scene.add(floors);
+}
 // floor center emblem
 for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
   const m = new THREE.Mesh(new THREE.RingGeometry(r, r + 0.08, 64), new THREE.MeshBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: o, depthWrite: false }));
