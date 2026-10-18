@@ -197,6 +197,26 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 }
 .binds button.wait { color: var(--void); background: var(--you); border-color: var(--you); }
 .controls.fixed dt { white-space: normal; }
+.name-field { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; font-size: 12px; color: var(--dim); }
+.name-field input { min-width: 0; font: 600 14px var(--font-mono); color: var(--ink); background: transparent; border: 1px solid var(--line); padding: 8px 10px; }
+.name-field input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.res-note { margin: 0; font-size: 13px; color: var(--cpu); min-height: 1em; }
+.res-note:empty { display: none; }
+.board-tabs { grid-template-columns: repeat(4, 1fr); }
+.board-tabs button[aria-selected="true"] { background: var(--you); color: var(--void); }
+.scope-row { display: flex; gap: 18px; }
+.scope-row[hidden] { display: none; }
+.board-wrap { overflow-x: auto; }
+.board-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.board-table th { text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 0.16em; color: var(--dim); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.board-table td { padding: 7px 8px; border-bottom: 1px solid rgba(28, 74, 104, 0.45); color: var(--ink); white-space: nowrap; }
+.board-table td.num { text-align: right; }
+.board-table th.num { text-align: right; }
+.board-table tr.me td { color: var(--you); }
+.board-table td.rank { color: var(--dim); width: 3ch; }
+.board-table td.name { white-space: normal; overflow-wrap: anywhere; }
+.board-table .empty { color: var(--dim); text-align: center; padding: 18px 8px; white-space: normal; }
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .stats .h { font-size: 10px; letter-spacing: 0.2em; color: var(--dim); }
 .stats .y { color: var(--you); text-align: right; }
@@ -213,7 +233,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
 <div id="hud" hidden>
   <div class="hud-top">
-    <div class="side you"><span class="tag">YOU</span><span class="dmg" id="youDmg">0</span><span class="sub"><span id="youHits">0</span> hits</span></div>
+    <div class="side you"><span class="tag" id="youTag">YOU</span><span class="dmg" id="youDmg">0</span><span class="sub"><span id="youHits">0</span> hits</span></div>
     <div class="clock"><span id="clock">2:00</span><span class="sub" id="diffLabel">Normal CPU</span></div>
     <div class="side cpu"><span class="tag" id="cpuTag">CPU</span><span class="dmg" id="cpuDmg">0</span><span class="sub"><span id="cpuHits">0</span> hits</span></div>
   </div>
@@ -239,6 +259,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     <p class="eyebrow">1v1 · 22 × 32 m arena · 9 m walls · discs ricochet</p>
     <h1>Disc Duel</h1>
     <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the two-minute clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
+    <label class="name-field" for="playerName">Your name <input id="playerName" maxlength="16" placeholder="Player" autocomplete="nickname" spellcheck="false"></label>
     <div class="diff" role="radiogroup" aria-label="CPU difficulty">
       <button type="button" role="radio" id="diff-easy" data-diff="easy" aria-checked="false">Easy</button>
       <button type="button" role="radio" id="diff-normal" data-diff="normal" aria-checked="true">Normal</button>
@@ -256,7 +277,10 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     </div>
     <p class="net-msg" id="offlineNote">Online matches need a signed-in claude.ai account with access to this page, or the game opened from its own website.</p>
     <p class="hint">WASD to move · hold left click to wind up and throw · flick the mouse as you release to curve · E Heavy, R Split. Every control is listed in Settings.</p>
-    <button type="button" class="ghost" id="settingsBtn">Settings &amp; controls</button>
+    <div class="btn-row">
+      <button type="button" class="ghost" id="boardBtn">Leaderboard</button>
+      <button type="button" class="ghost" id="settingsBtn">Settings &amp; controls</button>
+    </div>
     <p class="scoring"><b>Direct</b> 12 · <b>each bank</b> +8 · <b>reflect</b> +10 · <b>recall hit</b> 10 · <b>full wind-up</b> up to +10. The dotted line previews your first two bounces.</p>
     <p class="touch-note">This game needs a keyboard and mouse.</p>
   </div>
@@ -338,13 +362,35 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
   </div>
 </section>
 
-<section class="overlay center" id="results" hidden>
+<section class="overlay center scroll" id="board" hidden>
+  <div class="panel wide">
+    <p class="eyebrow" id="boardEyebrow">Best rounds</p>
+    <h2>Leaderboard</h2>
+    <div class="diff board-tabs" role="tablist" aria-label="Mode">
+      <button type="button" role="tab" id="tab-hard" data-mode="hard">Hard</button>
+      <button type="button" role="tab" id="tab-normal" data-mode="normal">Normal</button>
+      <button type="button" role="tab" id="tab-easy" data-mode="easy">Easy</button>
+      <button type="button" role="tab" id="tab-online" data-mode="online">Online</button>
+    </div>
+    <div class="scope-row" id="scopeRow" hidden>
+      <label class="check" for="scopeAll"><input type="radio" name="scope" id="scopeAll" value="all" checked> Everyone</label>
+      <label class="check" for="scopeMine"><input type="radio" name="scope" id="scopeMine" value="mine"> This computer</label>
+    </div>
+    <div class="board-wrap"><table class="board-table" id="boardTable"></table></div>
+    <p class="sens-note" id="boardNote"></p>
+    <div class="btns"><button type="button" class="go" id="boardDone">Back</button></div>
+  </div>
+</section>
+
+<section class="overlay center scroll" id="results" hidden>
   <div class="panel">
     <p class="eyebrow" id="resEyebrow">Time</p>
     <h2 id="resTitle">You win</h2>
+    <p class="res-note" id="resNote"></p>
     <div class="stats" id="resStats"></div>
     <div class="btns">
       <button type="button" class="go" id="rematchBtn">Rematch</button>
+      <button type="button" class="ghost" id="resBoardBtn">Leaderboard</button>
       <button type="button" class="ghost" id="menuBtn">Change difficulty</button>
     </div>
   </div>
@@ -379,6 +425,9 @@ const CURVE_GAIN = 0.55, CURVE_MAX = 2.4, CURVE_MIN_RATE = 0.8;
 const SPECIAL_CD = { heavy: 7, split: 7 }, DISC_KINDS = ['normal', 'heavy', 'split'];
 const HEAVY_R = 0.75, HEAVY_SCALE = 1.7, HEAVY_SPEED = 0.72, HEAVY_BONUS = 10;
 const SHARD_DMG = 8, SHARD_LIFE = 1.3, SHARD_SPREAD = 0.45, SHARD_R = 0.3;
+// Per-round stats beyond damage/hits/throws/banks/reflects, shown on the results screen.
+const EXTRA_STATS = ['best', 'maxBounce', 'blocks', 'heavyHits', 'splitHits', 'curveHits'];
+const ALL_STATS = ['dmg', 'hits', 'throws', 'banks', 'reflects'].concat(EXTRA_STATS);
 const BLOCK_T = 0.4, BLOCK_CD = 1.0, INVULN = 0.5, ROUND = 120;
 const DIFF = {
   easy:   { react: 0.22, aimErr: 0.09,  blockP: 0.12, dodgeP: 0.35, throwDelay: [1.4, 2.6], bankP: 0.15, chargeMax: 0.25, slideP: 0.15, specialP: 0.1 },
@@ -927,7 +976,7 @@ function throwDisc(f, dir, speed = DISC_SPEED, kind = 'normal', spin = 0) {
   handPos(f, d.pos);
   speed = clamp(speed, DISC_SPEED, CHARGE_SPEED) * (kind === 'heavy' ? HEAVY_SPEED : 1);
   d.vel.copy(dir).normalize().multiplyScalar(speed);
-  d.kind = kind; d.spin = clamp(spin || 0, -CURVE_MAX, CURVE_MAX); d.splitDone = false;
+  d.kind = kind; d.spin = clamp(spin || 0, -CURVE_MAX, CURVE_MAX); d.splitDone = false; d.curved = Math.abs(d.spin) > 0.3;
   d.state = 'flying'; d.bounces = 0; d.life = 0; d.reflected = false;
   d.target = other(f); d.credit = f; d.launchId++;
   f.throws++;
@@ -955,6 +1004,7 @@ function deflect(d, blocker) {
   d.state = 'flying'; d.bounces = 0; d.life = 0; d.spin = 0;
   d.target = attacker; d.credit = blocker; d.reflected = true; d.launchId++;
   blocker.blockT = Math.min(blocker.blockT, 0.12);
+  blocker.blocks++; d.curved = false;
   spawnRing(d.pos, tmp2, blocker.color, 2.2, 0.35);
   netFx('r', d.pos, tmp2, blocker);
   sfx('block', d.pos);
@@ -970,13 +1020,14 @@ function hit(d, victim) {
     if (d.bounces > 0) credit.banks++;
     if (d.reflected) credit.reflects++;
   }
-  if (d.kind === 'heavy') { dmg += HEAVY_BONUS; label = 'HEAVY ' + label; }
+  if (d.kind === 'heavy') { dmg += HEAVY_BONUS; label = 'HEAVY ' + label; credit.heavyHits++; }
+  if (!returning) { credit.maxBounce = Math.max(credit.maxBounce, d.bounces); if (d.curved) credit.curveHits++; }
   applyHit(victim, credit, dmg, label, d.vel, d.kind === 'heavy' ? 17 : 13, d.vel.length() > DISC_SPEED + 8 || d.kind === 'heavy');
   startReturn(d);
 }
 // Everything a landed hit does, for discs and split shards alike.
 function applyHit(victim, credit, dmg, label, dirVel, knock, big) {
-  credit.dmg += dmg; credit.hits++;
+  credit.dmg += dmg; credit.hits++; credit.best = Math.max(credit.best, dmg);
   tmp.set(dirVel.x, 0, dirVel.z).normalize();
   victim.vel.x += tmp.x * knock; victim.vel.z += tmp.z * knock;
   victim.vel.y = Math.max(victim.vel.y, knock * 0.5); victim.onGround = false;
@@ -1105,6 +1156,7 @@ function updateShards(dt) {
         sfx('block', sh.pos);
         gone = true;
       } else if (dist < PLAYER_R + SHARD_R) {
+        sh.credit.splitHits++;
         applyHit(v, sh.credit, SHARD_DMG, 'SPLIT', sh.vel, 7, false);
         gone = true;
       }
@@ -1556,6 +1608,7 @@ function resetFighter(f, z, yaw) {
   f.pos.set(0, 0, z); f.vel.set(0, 0, 0); f.wish.set(0, 0, 0);
   f.yaw = yaw; f.pitch = 0; f.dashT = f.dashCd = f.blockT = f.blockCd = f.invuln = f.flash = 0;
   f.dmg = f.hits = f.throws = f.banks = f.reflects = 0;
+  for (const k of EXTRA_STATS) f[k] = 0;
   cancelCharge(f);
   f.throwAnim = f.slideT = f.slideCd = f.wallJumpCd = 0; f.airDash = f.dashAir = false;
   f.cd.heavy = f.cd.split = 0; f.armed = null; f.yawRate = 0; f.lastYaw = yaw;
@@ -1569,7 +1622,7 @@ resetFighter(cpu, -10, Math.PI);
 
 const $ = id => document.getElementById(id);
 const ui = {
-  hud: $('hud'), menu: $('menu'), pause: $('pause'), results: $('results'), lobby: $('lobby'), settings: $('settings'),
+  hud: $('hud'), menu: $('menu'), pause: $('pause'), results: $('results'), lobby: $('lobby'), settings: $('settings'), board: $('board'),
   banner: $('banner'), bannerBig: $('bannerBig'), bannerSmall: $('bannerSmall'),
   youDmg: $('youDmg'), cpuDmg: $('cpuDmg'), youHits: $('youHits'), cpuHits: $('cpuHits'),
   clock: $('clock'), diffLabel: $('diffLabel'), chip: $('discChip'), dash: $('dashBar'), shield: $('shieldBar'),
@@ -1581,6 +1634,7 @@ function show(name) {
   ui.results.hidden = name !== 'results';
   ui.lobby.hidden = name !== 'lobby';
   ui.settings.hidden = true; rebinding = null;
+  ui.board.hidden = true;
   ui.hud.hidden = !(name === 'playing' || name === 'paused');
 }
 function lock() {
@@ -1621,7 +1675,8 @@ function toMenu() {
 function endRound() {
   cancelCharge(player);
   state.mode = 'results'; unlock();
-  const y = player.dmg, c = cpu.dmg, online = !!net.match, foe = online ? 'Rival' : 'CPU';
+  const y = player.dmg, c = cpu.dmg, online = !!net.match;
+  const me = playerName(), foe = online ? (net.oppName || 'Rival') : 'CPU';
   $('resEyebrow').textContent = online ? 'Time · online match ' + net.code : 'Time · ' + state.diff + ' CPU';
   $('resTitle').textContent = y > c ? 'You win' : y < c ? foe + ' wins' : 'Draw';
   const guestWait = online && net.role === 'guest';
@@ -1629,13 +1684,138 @@ function endRound() {
   $('rematchBtn').textContent = guestWait ? 'Waiting for host to rematch' : 'Rematch';
   $('menuBtn').textContent = online ? 'Leave match' : 'Change difficulty';
   $('resTitle').style.color = y > c ? 'var(--you)' : y < c ? 'var(--cpu)' : 'var(--ink)';
-  const acc = f => f.throws ? Math.round(f.hits / f.throws * 100) + '%' : '–';
-  const rows = [['Damage dealt', y, c], ['Hits', player.hits, cpu.hits], ['Throws', player.throws, cpu.throws], ['Accuracy', acc(player), acc(cpu)], ['Bank-shot hits', player.banks, cpu.banks], ['Reflect hits', player.reflects, cpu.reflects]];
-  $('resStats').innerHTML = '<span class="h"></span><span class="h y">YOU</span><span class="h c">' + foe.toUpperCase() + '</span>' +
-    rows.map(r => `<span>${r[0]}</span><span class="y">${r[1]}</span><span class="c">${r[2]}</span>`).join('');
+  const pct = f => f.throws ? Math.round(f.hits / f.throws * 100) + '%' : '–';
+  const avg = f => f.hits ? (f.dmg / f.hits).toFixed(1) : '–';
+  const rows = [
+    ['Damage dealt', y, c], ['Hits', player.hits, cpu.hits], ['Throws', player.throws, cpu.throws],
+    ['Accuracy', pct(player), pct(cpu)], ['Damage per hit', avg(player), avg(cpu)], ['Best single hit', player.best, cpu.best],
+    ['Bank-shot hits', player.banks, cpu.banks], ['Most bounces in one hit', player.maxBounce, cpu.maxBounce],
+    ['Shield reflects', player.blocks, cpu.blocks], ['Reflect hits', player.reflects, cpu.reflects],
+    ['Curve hits', player.curveHits, cpu.curveHits], ['Heavy hits', player.heavyHits, cpu.heavyHits], ['Split shard hits', player.splitHits, cpu.splitHits],
+  ];
+  // Built with textContent: names come from players and are never treated as HTML.
+  const box = $('resStats');
+  box.textContent = '';
+  const cell = (text, cls) => { const e = document.createElement('span'); if (cls) e.className = cls; e.textContent = String(text); box.append(e); };
+  cell('', 'h'); cell(me, 'h y'); cell(foe, 'h c');
+  for (const r of rows) { cell(r[0]); cell(r[1], 'y'); cell(r[2], 'c'); }
   show('results');
   $('rematchBtn').focus();
+  recordRun({ name: me, score: y, hits: player.hits, acc: player.throws ? Math.round(player.hits / player.throws * 100) : 0,
+    mode: online ? 'online' : state.diff, won: y > c, opp: foe, at: Date.now() });
 }
+
+// ---------- Names ----------
+function cleanName(v) {
+  return String(v || '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+}
+let myName = '';
+try { myName = cleanName(localStorage.getItem('discduel.name')); } catch (e) { /* storage unavailable */ }
+function playerName() { return myName || 'Player'; }
+function setOppName(v) {
+  const n = cleanName(v);
+  if (!n || n === net.oppName) return;
+  net.oppName = n;
+  if (state.mode === 'playing' || state.mode === 'paused') $('cpuTag').textContent = n;
+}
+
+// ---------- Leaderboard ----------
+// Every finished round is saved in this browser. Inside the claude.ai artifact the board is also shared:
+// each player writes only their own document (scores/<their id>) and everyone reads all of them.
+const BOARD_MODES = ['hard', 'normal', 'easy', 'online'];
+const board = { local: [], shared: null, db: null, uid: null, unsub: null, mode: 'normal', scope: 'all', note: '' };
+try {
+  const saved = JSON.parse(localStorage.getItem('discduel.board') || '[]');
+  if (Array.isArray(saved)) board.local = saved.filter(r => r && typeof r.score === 'number' && BOARD_MODES.includes(r.mode));
+} catch (e) { /* storage unavailable */ }
+function cleanRun(r) {
+  return { name: cleanName(r.name) || 'Player', score: Math.max(0, Math.round(num(r.score))), hits: Math.round(num(r.hits)),
+    acc: clamp(Math.round(num(r.acc)), 0, 100), mode: BOARD_MODES.includes(r.mode) ? r.mode : 'normal',
+    won: !!r.won, opp: cleanName(r.opp) || 'CPU', at: num(r.at) };
+}
+function topRuns(list, n) { return list.slice().sort((a, b) => b.score - a.score || a.at - b.at).slice(0, n); }
+async function recordRun(run) {
+  if (run.score <= 0) return;
+  run = cleanRun(run);
+  board.mode = run.mode;
+  // Where would this round place among this computer's best for the mode?
+  const before = board.local.filter(r => r.mode === run.mode);
+  const bestBefore = before.length ? Math.max(...before.map(r => r.score)) : -1;
+  board.local = topRuns(board.local.concat([run]), 200);
+  try { localStorage.setItem('discduel.board', JSON.stringify(board.local)); } catch (e) { /* storage unavailable */ }
+  const rank = topRuns(board.local.filter(r => r.mode === run.mode), 1000).indexOf(board.local.find(r => r === run)) + 1;
+  $('resNote').textContent = run.score > bestBefore ? 'New personal best for ' + modeName(run.mode) + '!' : rank > 0 && rank <= 10 ? '#' + rank + ' on this computer for ' + modeName(run.mode) : '';
+  if (board.db && board.uid) {
+    try {
+      const ref = board.db.doc('scores/' + board.uid);
+      const snap = await ref.get();
+      const old = snap.exists && Array.isArray((snap.data() || {}).runs) ? snap.data().runs.map(cleanRun) : [];
+      // Keep each player's best few per mode so the shared board stays small.
+      const keep = [];
+      for (const m of BOARD_MODES) keep.push(...topRuns(old.concat([run]).filter(r => r.mode === m), 5));
+      await ref.set({ name: run.name, runs: keep });
+      board.note = '';
+    } catch (e) {
+      board.note = e && e.code === 'invalid_argument' ? 'Your scores stay on this computer: your access to this page is view-only.' : 'Could not save to the shared board just now.';
+    }
+  }
+}
+function modeName(m) { return m === 'online' ? 'online matches' : m[0].toUpperCase() + m.slice(1) + ' CPU'; }
+// Inside the artifact: keep a live copy of everyone's best rounds.
+(async () => {
+  for (let i = 0; i < 40 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
+  if (!(window.claude && window.claude.use)) return;
+  try {
+    const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+    if (!db) return;
+    board.db = db;
+    const id = user ? await user.id() : null;
+    if (id && /^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(id)) board.uid = id;
+    board.unsub = db.collection('scores').limit(500).onSnapshot(snap => {
+      const all = [];
+      for (const d of snap.docs) {
+        const body = d.data() || {};
+        if (Array.isArray(body.runs)) for (const r of body.runs.slice(0, 40)) all.push(Object.assign(cleanRun(r), { mine: d.id === board.uid }));
+      }
+      board.shared = all;
+      if (!ui.board.hidden) renderBoard();
+    }, () => { board.shared = null; });
+  } catch (e) { /* no shared board in this view */ }
+})();
+function renderBoard() {
+  for (const m of BOARD_MODES) $('tab-' + m).setAttribute('aria-selected', String(board.mode === m));
+  const sharedOn = !!board.db;
+  $('scopeRow').hidden = !sharedOn;
+  const useShared = sharedOn && board.scope === 'all';
+  $('boardEyebrow').textContent = useShared ? 'Everyone with access to this page' : 'Best rounds on this computer';
+  const source = useShared ? (board.shared || []) : board.local.map(r => Object.assign({}, r, { mine: true }));
+  const rows = topRuns(source.filter(r => r.mode === board.mode), 20);
+  const t = $('boardTable');
+  t.textContent = '';
+  const head = t.insertRow();
+  for (const [h, cls] of [['#', ''], ['Name', ''], ['Damage', 'num'], ['Hits', 'num'], ['Accuracy', 'num'], ['Result', ''], ['Date', '']]) {
+    const th = document.createElement('th'); th.textContent = h; if (cls) th.className = cls; head.append(th);
+  }
+  if (!rows.length) {
+    const td = t.insertRow().insertCell(); td.colSpan = 7; td.className = 'empty';
+    td.textContent = useShared && !board.shared ? 'Loading scores…' : 'No rounds yet for ' + modeName(board.mode) + '. Finish one to get on the board.';
+  }
+  rows.forEach((r, i) => {
+    const tr = t.insertRow();
+    if (r.mine && useShared) tr.className = 'me';
+    const vals = [[i + 1, 'rank'], [r.name, 'name'], [r.score, 'num'], [r.hits, 'num'], [r.acc + '%', 'num'],
+      [(r.won ? 'Won' : 'Lost') + ' vs ' + r.opp, ''], [r.at ? new Date(r.at).toLocaleDateString() : '', '']];
+    for (const [v, cls] of vals) { const td = tr.insertCell(); td.textContent = String(v); if (cls) td.className = cls; }
+  });
+  $('boardNote').textContent = board.note || (useShared ? 'Each player keeps their best 5 rounds per mode on the shared board.' : sharedOn ? '' : 'Scores are saved in this browser.');
+}
+function openBoard() {
+  renderBoard();
+  ui.menu.hidden = true; ui.pause.hidden = true; ui.results.hidden = true;
+  ui.board.hidden = false;
+  $('boardDone').focus();
+}
+function closeBoard() { ui.board.hidden = true; show(state.mode); }
 
 let hudCache = {};
 function setText(el, k, v) { if (hudCache[k] !== v) { hudCache[k] = v; el.textContent = v; } }
@@ -1684,10 +1864,13 @@ addEventListener('keydown', e => {
   renderBinds();
 }, true);
 addEventListener('keydown', e => {
+  // Typing a name isn't playing: no game keys (mute included) while that box has focus.
+  if (document.activeElement && document.activeElement.id === 'playerName') return;
   keys[e.code] = true;
   const b = settings.binds;
   if (e.code === b.mute && !e.repeat) { muted = !muted; applyVolume(); }
   if (!ui.settings.hidden) { if (e.code === 'Escape') closeSettings(); return; }
+  if (!ui.board.hidden) { if (e.code === 'Escape') closeBoard(); return; }
   if (state.mode !== 'playing') return;
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) || Object.values(b).includes(e.code)) e.preventDefault();
   if (e.repeat) return;
@@ -1820,6 +2003,19 @@ function closeSettings() {
   show(state.mode);
 }
 $('settingsBtn').addEventListener('click', openSettings);
+$('boardBtn').addEventListener('click', openBoard);
+$('resBoardBtn').addEventListener('click', openBoard);
+$('boardDone').addEventListener('click', closeBoard);
+for (const m of BOARD_MODES) $('tab-' + m).addEventListener('click', () => { board.mode = m; renderBoard(); });
+for (const id of ['scopeAll', 'scopeMine']) $(id).addEventListener('change', e => { board.scope = e.target.value; renderBoard(); });
+$('playerName').value = myName;
+$('playerName').addEventListener('input', e => {
+  myName = cleanName(e.target.value);
+  $('youTag').textContent = playerName();
+  try { localStorage.setItem('discduel.name', myName); } catch (err) { /* storage unavailable */ }
+});
+$('playerName').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+$('youTag').textContent = playerName();
 $('pauseSettingsBtn').addEventListener('click', openSettings);
 $('settingsDone').addEventListener('click', closeSettings);
 addEventListener('contextmenu', e => e.preventDefault());
@@ -1970,11 +2166,12 @@ function netSend(now) {
   const p = net.role === 'host'
     ? { k: 'h', gp: net.oppPeer, ph: net.phase, ct: r2(net.countT), tm: r2(state.time), f: packF(player),
         d: [packD(player.disc), packD(cpu.disc)],
-        sc: [player.dmg, player.hits, player.throws, player.banks, player.reflects, cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects],
+        sc: ALL_STATS.map(k => player[k]).concat(ALL_STATS.map(k => cpu[k])),
         gh: net.gh, fx: net.fx,
         sh: shards.slice(0, 4).map(sh => [r2(sh.pos.x), r2(sh.pos.y), r2(sh.pos.z), r2(sh.vel.x), r2(sh.vel.y), r2(sh.vel.z), sh.owner === player ? 0 : 1]) }
     : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
   p.ts = r3(now / 1000);
+  p.n = playerName();
   net.match.presence(p).catch(() => {});
 }
 
@@ -2011,7 +2208,7 @@ async function openMatch(code, role) {
   Object.assign(net, {
     match: m, role, code, phase: role === 'host' ? 'wait' : 'off', countT: 0, oppPeer: null, opp: null, oppAt: 0,
     fx: [], fxSeen: -1, ghSeen: -1, gh: { n: 0, x: 0, z: 0 }, act: { t: 0, r: 0, dir: [0, 0, -1] }, actSeen: { t: 0, r: 0 }, lastSend: 0,
-    snaps: [], off: null, predUntil: 0,
+    snaps: [], off: null, predUntil: 0, oppName: '',
   });
   $('netMsg').textContent = '';
   $('lobbyCode').textContent = code;
@@ -2044,7 +2241,7 @@ function onMatchPeers(ch) {
     if (!g) g = others.find(p => p.presence.k === 'g');
     if (!g) return;
     const first = net.oppPeer !== g.peer;
-    net.oppPeer = g.peer; net.opp = g.presence; net.oppAt = g.updatedAt; recordSnap(g.presence);
+    net.oppPeer = g.peer; net.opp = g.presence; net.oppAt = g.updatedAt; recordSnap(g.presence); setOppName(g.presence.n);
     if (first) hostStart();
   } else {
     if (others.some(p => p.presence.k === 'full')) { netEnd('Match ' + net.code + ' already has two players.'); return; }
@@ -2054,11 +2251,11 @@ function onMatchPeers(ch) {
       if (state.mode === 'lobby') $('lobbyMsg').textContent = 'Match ' + net.code + ' already has two players.';
       return;
     }
-    net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt; recordSnap(h.presence);
+    net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt; recordSnap(h.presence); setOppName(h.presence.n);
     const ph = h.presence.ph;
     if ((ph === 'count' || ph === 'play') && (state.mode === 'lobby' || state.mode === 'results')) beginOnlineRound();
     else if (ph === 'over' && (state.mode === 'playing' || state.mode === 'paused')) { applyHostState(h.presence, 0, 0); endRound(); }
-    else if (ph === 'wait' && state.mode === 'lobby') $('lobbyMsg').textContent = 'Found the host. Starting…';
+    else if (ph === 'wait' && state.mode === 'lobby') $('lobbyMsg').textContent = 'Found ' + (net.oppName || 'the host') + '. Starting…';
   }
 }
 function beginOnlineRound() {
@@ -2069,7 +2266,7 @@ function beginOnlineRound() {
   else { resetFighter(player, -10, Math.PI); resetFighter(cpu, 10, 0); }
   state.time = ROUND; state.hurt = 0; state.mode = 'playing';
   ui.diffLabel.textContent = 'Online · ' + net.code;
-  $('cpuTag').textContent = 'RIVAL';
+  $('cpuTag').textContent = net.oppName || 'RIVAL';
   show('playing');
   lock();
 }
@@ -2192,9 +2389,8 @@ function remoteDisc(d, pk, age, dt) {
 function applyHostState(h, age, dt) {
   state.time = num(h.tm);
   const s = h.sc;
-  if (Array.isArray(s) && s.length >= 10) {
-    [cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects] = s.slice(0, 5).map(num);
-    [player.dmg, player.hits, player.throws, player.banks, player.reflects] = s.slice(5, 10).map(num);
+  if (Array.isArray(s) && s.length >= ALL_STATS.length * 2) {
+    ALL_STATS.forEach((k, i) => { cpu[k] = num(s[i]); player[k] = num(s[ALL_STATS.length + i]); });
   }
   if (!dt) return;
   if (Array.isArray(h.d)) { remoteDisc(cpu.disc, h.d[0], age, dt); remoteDisc(player.disc, h.d[1], age, dt); }

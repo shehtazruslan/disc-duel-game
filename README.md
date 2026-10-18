@@ -11,6 +11,12 @@ A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet
 
 The glass walls look out on a stadium of other arenas. A few of them run CPU exhibition matches; add `?stadium=0` to the URL to turn those off. See [docs/stadium-design.md](docs/stadium-design.md) for the plan to show real online matches there.
 
+## Names, stats and leaderboard
+
+- Set your name on the menu; online, your rival sees it.
+- After each round, the results screen compares both players: damage, hits, accuracy, damage per hit, best hit, bank shots, most bounces in one hit, shield reflects, and curve, Heavy and Split hits.
+- The leaderboard ranks your best rounds by damage for each mode (Easy, Normal, Hard, Online). On the GitHub Pages site it keeps the scores from this browser; inside the claude.ai artifact it is shared with everyone who can open the page.
+
 ## Controls
 
 Default keys; every key can be changed in **Settings & controls**.
