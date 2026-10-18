@@ -1,0 +1,1532 @@
+<meta charset="utf-8">
+<title>Disc Duel</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-bleed WebGL arena; HUD pinned to screen edges; menus as a left-docked console over a live attract match. Single dark look by choice. */
+:root {
+  --void: #03060c;
+  --panel: rgba(6, 12, 22, 0.86);
+  --line: #1c4a68;
+  --ink: #dcefff;
+  --dim: #7d97b4;
+  --you: #3ff0ff;
+  --cpu: #ff8a2a;
+  --hurt: #ff2e57;
+  --font-display: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#stage, #stage canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+#vignette {
+  position: fixed; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 45%, var(--hurt) 140%);
+}
+#floats { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.float {
+  position: absolute; transform: translate(-50%, -50%);
+  font-family: var(--font-display); font-weight: 700; font-size: 18px; letter-spacing: 0.06em;
+  white-space: nowrap; text-shadow: 0 0 10px currentColor;
+}
+
+/* HUD */
+#hud { position: fixed; inset: 0; pointer-events: none; }
+.hud-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  padding-top: calc(14px + env(safe-area-inset-top, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 16px;
+}
+.side { display: grid; gap: 2px; }
+.side.cpu { justify-items: end; text-align: right; }
+.tag { font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: 0.22em; }
+.you .tag, .you .dmg { color: var(--you); }
+.cpu .tag, .cpu .dmg { color: var(--cpu); }
+.dmg {
+  font-family: var(--font-display); font-weight: 700; font-size: clamp(30px, 5vw, 46px); line-height: 1;
+  font-variant-numeric: tabular-nums; text-shadow: 0 0 18px currentColor;
+}
+.sub { font-size: 11px; color: var(--dim); letter-spacing: 0.12em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.clock { display: grid; justify-items: center; gap: 2px; }
+#clock { font-family: var(--font-display); font-weight: 700; font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+#clock.low { color: var(--hurt); }
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; transform: translate(-50%, -50%);
+  border: 1.5px solid var(--you); border-radius: 50%; opacity: 0.9; transition: opacity .15s, transform .15s;
+}
+#crosshair i { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; background: var(--you); border-radius: 50%; }
+#crosshair.empty { opacity: 0.3; transform: translate(-50%, -50%) scale(0.7); }
+.hud-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; justify-content: center; align-items: center; gap: 22px; flex-wrap: wrap;
+}
+.chip {
+  font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: 0.18em;
+  padding: 6px 12px; border: 1px solid var(--you); color: var(--you); min-width: 13ch; text-align: center;
+}
+.chip.out { border-color: var(--line); color: var(--dim); }
+.meter { display: grid; gap: 4px; font-size: 10px; letter-spacing: 0.2em; color: var(--dim); }
+.meter b { display: block; width: 110px; height: 4px; background: var(--line); }
+.meter i { display: block; height: 100%; width: 100%; background: var(--you); }
+.meter i.off { background: var(--dim); }
+
+/* Overlays */
+.overlay {
+  position: fixed; inset: 0; display: flex; align-items: center;
+  padding-block: 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow-y: auto;
+}
+.overlay.center { justify-content: center; background: rgba(2, 4, 9, 0.55); }
+.panel {
+  width: min(440px, 100%); margin-left: clamp(0px, 6vw, 90px);
+  background: var(--panel); border: 1px solid var(--line);
+  padding: 28px 28px 24px; display: grid; gap: 18px;
+  clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+  backdrop-filter: blur(6px);
+}
+.center .panel { margin-left: 0; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: 0.24em; color: var(--dim); text-transform: uppercase; }
+h1, h2 {
+  margin: 0; font-family: var(--font-display); font-weight: 700; text-wrap: balance;
+  letter-spacing: 0.04em; line-height: 0.95;
+}
+h1 { font-size: clamp(48px, 9vw, 72px); background: linear-gradient(90deg, var(--you) 0 48%, var(--cpu) 52% 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+h2 { font-size: 40px; }
+.lede { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink); max-width: 46ch; }
+.diff { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--line); }
+.diff button {
+  font: 600 12px var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 10px 0; background: transparent; color: var(--dim); border: 0; cursor: pointer;
+}
+.diff button + button { border-left: 1px solid var(--line); }
+.diff button[aria-checked="true"] { background: var(--cpu); color: var(--void); }
+.go {
+  font: 700 16px var(--font-display); letter-spacing: 0.2em; text-transform: uppercase;
+  padding: 14px 18px; background: var(--you); color: var(--void); border: 0; cursor: pointer;
+  clip-path: polygon(0 0, 100% 0, 100% 70%, calc(100% - 12px) 100%, 0 100%);
+}
+.go:hover { filter: brightness(1.15); }
+.ghost {
+  font: 600 12px var(--font-mono); letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 12px; background: transparent; color: var(--ink); border: 1px solid var(--line); cursor: pointer;
+}
+button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.btns { display: grid; gap: 10px; }
+.controls { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 12px; }
+.controls dt { color: var(--you); white-space: nowrap; }
+.controls dd { margin: 0; color: var(--dim); }
+.scoring { margin: 0; font-size: 11px; color: var(--dim); letter-spacing: 0.06em; line-height: 1.6; border-top: 1px solid var(--line); padding-top: 12px; }
+.scoring b { color: var(--ink); font-weight: 600; }
+.touch-note { display: none; margin: 0; font-size: 12px; color: var(--cpu); }
+@media (hover: none) and (pointer: coarse) { .touch-note { display: block; } }
+.online { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+.online-row { display: grid; grid-template-columns: 1fr 7ch auto; gap: 8px; }
+.online-row input {
+  min-width: 0; font: 600 15px var(--font-mono); letter-spacing: 0.3em; text-transform: uppercase; text-align: center;
+  background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 8px 4px;
+}
+.online-row input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.net-msg { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.5; }
+.net-msg:empty { display: none; }
+.code { font-size: 64px; letter-spacing: 0.25em; color: var(--you); text-shadow: 0 0 18px currentColor; }
+.ghost:disabled { opacity: 0.5; cursor: default; }
+#banner {
+  position: absolute; left: 0; right: 0; top: 30%; display: grid; justify-items: center; gap: 6px; text-align: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+#bannerBig { font-family: var(--font-display); font-size: 72px; line-height: 1; color: var(--ink); text-shadow: 0 0 24px var(--you); }
+#bannerSmall { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+.stats { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.stats .h { font-size: 10px; letter-spacing: 0.2em; color: var(--dim); }
+.stats .y { color: var(--you); text-align: right; }
+.stats .c { color: var(--cpu); text-align: right; }
+@media (max-width: 560px) {
+  .panel { margin-left: 0; padding: 22px 20px 20px; }
+  .meter b { width: 72px; }
+}
+</style>
+
+<div id="stage"></div>
+<div id="vignette"></div>
+<div id="floats"></div>
+
+<div id="hud" hidden>
+  <div class="hud-top">
+    <div class="side you"><span class="tag">YOU</span><span class="dmg" id="youDmg">0</span><span class="sub"><span id="youHits">0</span> hits</span></div>
+    <div class="clock"><span id="clock">2:00</span><span class="sub" id="diffLabel">Normal CPU</span></div>
+    <div class="side cpu"><span class="tag" id="cpuTag">CPU</span><span class="dmg" id="cpuDmg">0</span><span class="sub"><span id="cpuHits">0</span> hits</span></div>
+  </div>
+  <div id="crosshair"><i></i></div>
+  <div id="banner" hidden><b id="bannerBig"></b><span id="bannerSmall"></span></div>
+  <div class="hud-bottom">
+    <div class="chip" id="discChip">Disc ready</div>
+    <div class="meter">DASH<b><i id="dashBar"></i></b></div>
+    <div class="meter">SHIELD<b><i id="shieldBar"></i></b></div>
+  </div>
+</div>
+
+<section class="overlay" id="menu">
+  <div class="panel">
+    <p class="eyebrow">1v1 · 22 m arena · 9 m walls · discs ricochet</p>
+    <h1>Disc Duel</h1>
+    <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the two-minute clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
+    <div class="diff" role="radiogroup" aria-label="CPU difficulty">
+      <button type="button" role="radio" id="diff-easy" data-diff="easy" aria-checked="false">Easy</button>
+      <button type="button" role="radio" id="diff-normal" data-diff="normal" aria-checked="true">Normal</button>
+      <button type="button" role="radio" id="diff-hard" data-diff="hard" aria-checked="false">Hard</button>
+    </div>
+    <button type="button" class="go" id="startBtn">Enter the arena</button>
+    <div class="online" id="online" hidden>
+      <p class="eyebrow">Online · versus a person</p>
+      <div class="online-row">
+        <button type="button" class="ghost" id="hostBtn">Create match</button>
+        <input id="joinCode" maxlength="4" placeholder="CODE" aria-label="Match code" autocomplete="off" spellcheck="false">
+        <button type="button" class="ghost" id="joinBtn">Join</button>
+      </div>
+      <p class="net-msg" id="netMsg"></p>
+    </div>
+    <p class="net-msg" id="offlineNote">Online matches need a signed-in claude.ai account with access to this page, or the game opened from its own website.</p>
+    <dl class="controls">
+      <dt>Mouse</dt><dd>Aim (click locks the cursor)</dd>
+      <dt>Left click</dt><dd>Throw disc · click again to recall it</dd>
+      <dt>Right click / Q</dt><dd>Shield: reflects a disc back at its thrower. Disc must be in hand</dd>
+      <dt>W A S D</dt><dd>Move</dd>
+      <dt>Space · Shift</dt><dd>Jump · Dash</dd>
+      <dt>Esc · M</dt><dd>Pause · Mute</dd>
+    </dl>
+    <p class="scoring"><b>Direct</b> 12 · <b>each bank</b> +8 · <b>reflect</b> +10 · <b>recall hit</b> 10. The dotted line previews your first two bounces.</p>
+    <p class="touch-note">This game needs a keyboard and mouse.</p>
+  </div>
+</section>
+
+<section class="overlay center" id="lobby" hidden>
+  <div class="panel">
+    <p class="eyebrow">Online match code</p>
+    <h2 class="code" id="lobbyCode">----</h2>
+    <p class="lede" id="lobbyMsg">Connecting…</p>
+    <div class="btns">
+      <button type="button" class="ghost" id="copyBtn">Copy code</button>
+      <button type="button" class="ghost" id="leaveBtn">Leave</button>
+    </div>
+  </div>
+</section>
+
+<section class="overlay center" id="pause" hidden>
+  <div class="panel">
+    <p class="eyebrow" id="pauseEyebrow">Match paused</p>
+    <h2 id="pauseTitle">Paused</h2>
+    <div class="btns">
+      <button type="button" class="go" id="resumeBtn">Resume</button>
+      <button type="button" class="ghost" id="quitBtn">Quit to menu</button>
+    </div>
+  </div>
+</section>
+
+<section class="overlay center" id="results" hidden>
+  <div class="panel">
+    <p class="eyebrow" id="resEyebrow">Time</p>
+    <h2 id="resTitle">You win</h2>
+    <div class="stats" id="resStats"></div>
+    <div class="btns">
+      <button type="button" class="go" id="rematchBtn">Rematch</button>
+      <button type="button" class="ghost" id="menuBtn">Change difficulty</button>
+    </div>
+  </div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(() => {
+'use strict';
+const V3 = THREE.Vector3;
+
+// ---------- Tuning ----------
+// Compact, low-ceilinged box: 22 m square floor, 9 m walls.
+const ARENA = 22, HALF = ARENA / 2, CEIL = 9;
+const DISC_R = 0.45, DISC_SPEED = 26, RETURN_SPEED = 30, MAX_BOUNCES = 3;
+const PLAYER_R = 0.6, PLAYER_H = 2.1;
+const GRAV = 32, JUMP_V = 12, MOVE = 9, DASH_V = 26, DASH_T = 0.16, DASH_CD = 1.1;
+const BLOCK_T = 0.4, BLOCK_CD = 1.0, INVULN = 0.5, ROUND = 120;
+const DIFF = {
+  easy:   { react: 0.22, aimErr: 0.09,  blockP: 0.12, dodgeP: 0.35, throwDelay: [1.4, 2.6], bankP: 0.15 },
+  normal: { react: 0.36, aimErr: 0.045, blockP: 0.3,  dodgeP: 0.6,  throwDelay: [1.0, 2.0], bankP: 0.35 },
+  hard:   { react: 0.5,  aimErr: 0.02,  blockP: 0.5,  dodgeP: 0.85, throwDelay: [0.45, 1.1], bankP: 0.5 },
+};
+const COL_YOU = 0x3ff0ff, COL_CPU = 0xff8a2a;
+const AXES = ['x', 'y', 'z'];
+const BMIN = new V3(-HALF + DISC_R, DISC_R, -HALF + DISC_R);
+const BMAX = new V3(HALF - DISC_R, CEIL - DISC_R, HALF - DISC_R);
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
+const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.4;
+const tmp = new V3(), tmp2 = new V3(), tmp3 = new V3();
+const r2 = v => Math.round(v * 100) / 100;
+
+// Online state. Host runs discs, hits, score and clock; each side owns its own fighter's movement.
+const net = {
+  room: null, match: null, role: null, code: '', phase: 'off', countT: 0,
+  myPeer: null, oppPeer: null, opp: null, oppAt: 0,
+  lastSend: 0, fx: [], fxSeq: 0, fxSeen: 0, gh: { n: 0, x: 0, z: 0 }, ghSeen: 0,
+  act: { t: 0, r: 0, dir: [0, 0, -1] }, actSeen: { t: 0, r: 0 }, throwAt: 0, unsub: null,
+};
+
+// ---------- Renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+renderer.setSize(innerWidth, innerHeight);
+document.getElementById('stage').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02040a);
+scene.fog = new THREE.Fog(0x02040a, 22, 55);
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 200);
+
+let composer = null, bloom = null;
+if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
+  try {
+    composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.45, 0.25);
+    composer.addPass(bloom);
+  } catch (e) { composer = null; }
+}
+
+// Grid cells stay square on every face: floor/ceiling are ARENA×ARENA, walls ARENA×CEIL.
+function gridTexture(wUnits, hUnits) {
+  const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#04070e';
+  g.fillRect(0, 0, W, H);
+  const cell = 1.375 * ppu;
+  const line = (i, vertical) => {
+    const major = i % 4 === 0;
+    g.strokeStyle = major ? '#1d6a94' : '#0e2b42';
+    g.lineWidth = major ? 4 : 2;
+    g.beginPath();
+    if (vertical) { g.moveTo(i * cell, 0); g.lineTo(i * cell, H); } else { g.moveTo(0, H - i * cell); g.lineTo(W, H - i * cell); }
+    g.stroke();
+  };
+  for (let i = 1; i * cell < W - 2; i++) line(i, true);
+  for (let i = 1; i * cell < H - 2; i++) line(i, false);
+  g.strokeStyle = '#2fb6ee';
+  g.lineWidth = 12;
+  g.strokeRect(6, 6, W - 12, H - 12);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, side: THREE.BackSide });
+const wallMat = roomMat(gridTexture(ARENA, CEIL)), flatMat = roomMat(gridTexture(ARENA, ARENA));
+// BoxGeometry face order: +x, -x, +y, -y, +z, -z
+const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA, CEIL, ARENA), [wallMat, wallMat, flatMat, flatMat, wallMat, wallMat]);
+room.position.y = CEIL / 2;
+scene.add(room);
+const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA - 0.02, CEIL - 0.02, ARENA - 0.02)), new THREE.LineBasicMaterial({ color: 0x8fe8ff }));
+edges.position.y = CEIL / 2;
+scene.add(edges);
+// floor center emblem
+for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(r, r + 0.08, 64), new THREE.MeshBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: o, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.02; scene.add(m);
+}
+scene.add(new THREE.AmbientLight(0x3a5a90, 0.55));
+scene.add(new THREE.HemisphereLight(0x6c8cff, 0x080a14, 0.45));
+const key = new THREE.DirectionalLight(0xbfdcff, 0.45);
+key.position.set(6, 8, 8);
+scene.add(key);
+
+// ---------- Meshes ----------
+function makeDiscMesh(color) {
+  const g = new THREE.Group();
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 8, 40), new THREE.MeshBasicMaterial({ color }));
+  rim.rotation.x = Math.PI / 2;
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.06, 32), new THREE.MeshStandardMaterial({ color: 0x0c121c, metalness: 0.8, roughness: 0.3, emissive: color, emissiveIntensity: 0.12 }));
+  const inner = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 6, 24), new THREE.MeshBasicMaterial({ color }));
+  inner.rotation.x = Math.PI / 2;
+  const notch = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.05), new THREE.MeshBasicMaterial({ color }));
+  g.add(rim, core, inner, notch);
+  return g;
+}
+
+function makeFighterMesh(color) {
+  const g = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: 0x0b111b, metalness: 0.6, roughness: 0.35, emissive: 0x000000 });
+  const glow = new THREE.MeshBasicMaterial({ color });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
+  add(new THREE.CylinderGeometry(0.42, 0.3, 0.95, 16), body, 0, 1.3, 0);
+  add(new THREE.CylinderGeometry(0.31, 0.29, 0.26, 16), body, 0, 0.78, 0);
+  add(new THREE.SphereGeometry(0.27, 20, 14), body, 0, 2.0, 0);
+  add(new THREE.BoxGeometry(0.36, 0.07, 0.1), glow, 0, 2.01, -0.22);
+  const belt = add(new THREE.TorusGeometry(0.31, 0.03, 6, 32), glow, 0, 0.9, 0);
+  belt.rotation.x = Math.PI / 2;
+  const collar = add(new THREE.TorusGeometry(0.3, 0.025, 6, 32), glow, 0, 1.76, 0);
+  collar.rotation.x = Math.PI / 2;
+  add(new THREE.BoxGeometry(0.05, 0.75, 0.04), glow, 0, 1.32, -0.37).rotation.x = -0.12;
+  for (const s of [-1, 1]) {
+    add(new THREE.CylinderGeometry(0.1, 0.08, 0.85, 10), body, s * 0.53, 1.27, 0).rotation.z = s * 0.12;
+    add(new THREE.BoxGeometry(0.03, 0.6, 0.03), glow, s * 0.6, 1.27, -0.06).rotation.z = s * 0.12;
+  }
+  const legs = [];
+  for (const s of [-1, 1]) {
+    const hip = new THREE.Group();
+    hip.position.set(s * 0.16, 0.72, 0);
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.72, 10), body);
+    leg.position.y = -0.36;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.55, 0.03), glow);
+    stripe.position.set(s * 0.11, -0.36, 0);
+    hip.add(leg, stripe);
+    g.add(hip);
+    legs.push(hip);
+  }
+  const backDisc = makeDiscMesh(color);
+  backDisc.rotation.x = Math.PI / 2;
+  backDisc.position.set(0, 1.35, 0.42);
+  backDisc.scale.setScalar(0.75);
+  g.add(backDisc);
+  const shield = new THREE.Mesh(new THREE.CircleGeometry(1.0, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+  shield.position.set(0, 1.25, -0.85);
+  const shieldRim = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 6 }, (_, i) => new V3(Math.cos(i / 6 * Math.PI * 2), Math.sin(i / 6 * Math.PI * 2), 0))), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0 }));
+  shield.add(shieldRim);
+  g.add(shield);
+  scene.add(g);
+  // foot ring + blob shadow
+  const foot = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.72, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+  foot.rotation.x = -Math.PI / 2;
+  const blob = new THREE.Mesh(new THREE.CircleGeometry(0.62, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }));
+  blob.rotation.x = -Math.PI / 2;
+  scene.add(foot, blob);
+  return { group: g, body, legs, backDisc, shield, shieldRim, foot, blob };
+}
+
+function makeDisc(owner, color) {
+  const mesh = makeDiscMesh(color);
+  mesh.visible = false;
+  scene.add(mesh);
+  const light = new THREE.PointLight(color, 1.8, 11, 2);
+  light.visible = false;
+  scene.add(light);
+  const N = 36;
+  const positions = new Float32Array(N * 3), colors = new Float32Array(N * 3);
+  const c = new THREE.Color(color);
+  for (let i = 0; i < N; i++) {
+    const k = Math.pow(1 - i / (N - 1), 1.6);
+    colors[i * 3] = c.r * k; colors[i * 3 + 1] = c.g * k; colors[i * 3 + 2] = c.b * k;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  trail.frustumCulled = false;
+  trail.visible = false;
+  scene.add(trail);
+  return { owner, color, mesh, light, trail, trailN: N, pos: new V3(), vel: new V3(), state: 'held', bounces: 0, life: 0, returnT: 0, target: null, credit: null, reflected: false, launchId: 0 };
+}
+
+function makeFighter(name, color, isCPU) {
+  const f = {
+    name, color, isCPU, mesh: makeFighterMesh(color),
+    pos: new V3(), vel: new V3(), wish: new V3(), dashDir: new V3(),
+    yaw: 0, pitch: 0, onGround: true, dashT: 0, dashCd: 0, blockT: 0, blockCd: 0, invuln: 0, flash: 0, walk: 0,
+    dmg: 0, hits: 0, throws: 0, banks: 0, reflects: 0, ai: null,
+  };
+  f.disc = makeDisc(f, color);
+  aiInit(f);
+  return f;
+}
+
+// ---------- Effects ----------
+const rings = [], ringLook = new V3();
+function spawnRing(pos, normal, color, size = 1, life = 0.5) {
+  let r = rings.find(r => r.t >= r.life);
+  if (!r) {
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.34, 40), new THREE.MeshBasicMaterial({ color, transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
+    scene.add(mesh);
+    r = { mesh, t: 0, life: 0 };
+    rings.push(r);
+  }
+  r.mesh.material.color.set(color);
+  r.mesh.position.copy(pos);
+  r.mesh.lookAt(ringLook.copy(pos).add(normal));
+  r.t = 0; r.life = life; r.size = size;
+  r.mesh.visible = true;
+}
+function updateRings(dt) {
+  for (const r of rings) {
+    if (r.t >= r.life) { r.mesh.visible = false; continue; }
+    r.t += dt;
+    const k = Math.min(1, r.t / r.life);
+    r.mesh.scale.setScalar(r.size * (1 + 5 * k));
+    r.mesh.material.opacity = 1 - k;
+  }
+}
+
+const floatsEl = document.getElementById('floats');
+const floats = [];
+function floatText(pos, text, color) {
+  const el = document.createElement('div');
+  el.className = 'float';
+  el.textContent = text;
+  el.style.color = '#' + new THREE.Color(color).getHexString();
+  floatsEl.appendChild(el);
+  floats.push({ el, pos: pos.clone(), t: 0 });
+}
+function updateFloats(dt) {
+  for (let i = floats.length - 1; i >= 0; i--) {
+    const f = floats[i];
+    f.t += dt;
+    if (f.t > 1.1) { f.el.remove(); floats.splice(i, 1); continue; }
+    tmp.copy(f.pos); tmp.y += f.t * 1.2;
+    tmp.project(camera);
+    if (tmp.z > 1) { f.el.style.opacity = 0; continue; }
+    f.el.style.left = ((tmp.x * 0.5 + 0.5) * innerWidth) + 'px';
+    f.el.style.top = ((-tmp.y * 0.5 + 0.5) * innerHeight) + 'px';
+    f.el.style.opacity = String(1 - Math.max(0, f.t - 0.6) / 0.5);
+  }
+}
+
+// ---------- Audio ----------
+let ac = null, muted = false;
+function audio() {
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; } }
+  if (ac && ac.state === 'suspended') ac.resume();
+  return ac;
+}
+function tone(f0, f1, dur, type, vol) {
+  const a = ac; if (!a || muted) return;
+  const o = a.createOscillator(), g = a.createGain(), t = a.currentTime;
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol, freq) {
+  const a = ac; if (!a || muted) return;
+  const len = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const s = a.createBufferSource(), flt = a.createBiquadFilter(), g = a.createGain();
+  s.buffer = buf; flt.type = 'bandpass'; flt.frequency.value = freq; flt.Q.value = 0.8; g.gain.value = vol;
+  s.connect(flt).connect(g).connect(a.destination); s.start();
+}
+function sfx(kind, near = 1) {
+  if (state.mode !== 'playing') return;
+  const v = 0.35 + 0.65 * near;
+  switch (kind) {
+    case 'throw': noise(0.22, 0.35 * v, 1800); tone(300, 900, 0.15, 'sawtooth', 0.04 * v); break;
+    case 'bounce': tone(1300, 700, 0.12, 'triangle', 0.09 * v); break;
+    case 'hit': tone(180, 50, 0.35, 'sawtooth', 0.18); noise(0.25, 0.5, 600); break;
+    case 'block': tone(1900, 1200, 0.18, 'square', 0.06); noise(0.12, 0.3, 4000); break;
+    case 'catch': tone(500, 1000, 0.1, 'sine', 0.1 * v); break;
+    case 'dash': noise(0.18, 0.25, 900); break;
+    case 'clash': tone(2400, 900, 0.25, 'square', 0.07); noise(0.2, 0.4, 3000); break;
+  }
+}
+
+// ---------- Geometry helpers ----------
+function chestOf(f, out) { return out.set(f.pos.x, f.pos.y + 1.15, f.pos.z); }
+function forwardOf(f, out) { return out.set(-Math.sin(f.yaw), 0, -Math.cos(f.yaw)); }
+function rightOf(f, out) { return out.set(Math.cos(f.yaw), 0, -Math.sin(f.yaw)); }
+function clampBounds(p) { for (const a of AXES) p[a] = clamp(p[a], BMIN[a] + 0.01, BMAX[a] - 0.01); return p; }
+function handPos(f, out) {
+  chestOf(f, out).add(forwardOf(f, tmp3).multiplyScalar(0.75));
+  out.add(rightOf(f, tmp3).multiplyScalar(0.25)); out.y += 0.2;
+  return clampBounds(out);
+}
+function other(f) { return f === player ? cpu : player; }
+function distToFighter(p, f) {
+  const y = clamp(p.y, f.pos.y + 0.35, f.pos.y + 1.8);
+  return Math.hypot(p.x - f.pos.x, p.y - y, p.z - f.pos.z);
+}
+function inFront(f, p) {
+  chestOf(f, tmp3); tmp3.subVectors(p, tmp3); tmp3.y = 0;
+  const l = tmp3.length(); if (l < 0.01) return true;
+  return (-Math.sin(f.yaw) * tmp3.x - Math.cos(f.yaw) * tmp3.z) / l > 0.05;
+}
+function rayExit(o, d) {
+  let t = Infinity;
+  for (const a of AXES) {
+    if (d[a] > 1e-6) t = Math.min(t, (BMAX[a] - o[a]) / d[a]);
+    else if (d[a] < -1e-6) t = Math.min(t, (BMIN[a] - o[a]) / d[a]);
+  }
+  return Math.max(0, t);
+}
+// Exact ricochet path inside the cube: start point plus one point per wall contact.
+function tracePath(p0, dir, maxBounces, maxLen) {
+  const p = p0.clone(), d = dir.clone().normalize(), pts = [p.clone()];
+  let len = 0;
+  for (let b = 0; b <= maxBounces; b++) {
+    let tMin = Infinity, axis = 'x';
+    for (const a of AXES) {
+      let t = Infinity;
+      if (d[a] > 1e-6) t = (BMAX[a] - p[a]) / d[a];
+      else if (d[a] < -1e-6) t = (BMIN[a] - p[a]) / d[a];
+      if (t < tMin) { tMin = t; axis = a; }
+    }
+    tMin = Math.max(0, tMin);
+    if (len + tMin > maxLen) { p.addScaledVector(d, maxLen - len); pts.push(p.clone()); break; }
+    p.addScaledVector(d, tMin); len += tMin; pts.push(p.clone());
+    d[axis] *= -1;
+  }
+  return pts;
+}
+function segDist(p, a, b) {
+  tmp3.subVectors(b, a);
+  const l2 = tmp3.lengthSq();
+  const t = l2 > 0 ? clamp(tmp.subVectors(p, a).dot(tmp3) / l2, 0, 1) : 0;
+  return tmp.copy(a).addScaledVector(tmp3, t).distanceTo(p);
+}
+function pathDist(pts, p) {
+  let m = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) m = Math.min(m, segDist(p, pts[i], pts[i + 1]));
+  return m;
+}
+function approachAngle(a, b, step) {
+  let d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+  return a + clamp(d, -step, step);
+}
+
+// ---------- Actions ----------
+function tryJump(f) { if (f.onGround) { f.vel.y = JUMP_V; f.onGround = false; } }
+function tryDash(f, dir) {
+  if (f.dashCd > 0) return;
+  const d = dir || (f.wish.lengthSq() > 0.01 ? f.wish : forwardOf(f, tmp));
+  f.dashDir.set(d.x, 0, d.z).normalize();
+  f.dashT = DASH_T; f.dashCd = DASH_CD;
+  sfx('dash', f === player ? 1 : 0.3);
+}
+function tryBlock(f) {
+  if (f.blockCd > 0 || f.disc.state !== 'held') return;
+  f.blockT = BLOCK_T; f.blockCd = BLOCK_CD;
+}
+function throwDisc(f, dir) {
+  const d = f.disc;
+  handPos(f, d.pos);
+  d.vel.copy(dir).normalize().multiplyScalar(DISC_SPEED);
+  d.state = 'flying'; d.bounces = 0; d.life = 0; d.reflected = false;
+  d.target = other(f); d.credit = f; d.launchId++;
+  f.throws++;
+  const arr = d.trail.geometry.attributes.position.array;
+  for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+  netFx('t', null, null, f);
+  sfx('throw', f === player ? 1 : 0.4);
+}
+function startReturn(d) { d.state = 'returning'; d.returnT = 0; d.reflected = false; }
+function catchDisc(d) {
+  d.state = 'held';
+  if (d.owner.ai) d.owner.ai.throwT = Math.max(d.owner.ai.throwT, 0.35);
+  netFx('k', null, null, d.owner);
+  sfx('catch', d.owner === player ? 1 : 0.3);
+}
+function deflect(d, blocker) {
+  const attacker = d.credit;
+  const sp = Math.min(d.vel.length() * 1.12, 42);
+  chestOf(attacker, tmp).sub(d.pos).normalize();
+  forwardOf(blocker, tmp2);
+  d.vel.copy(tmp).multiplyScalar(0.65).addScaledVector(tmp2, 0.35).normalize().multiplyScalar(sp);
+  d.pos.addScaledVector(d.vel, 0.03);
+  d.state = 'flying'; d.bounces = 0; d.life = 0;
+  d.target = attacker; d.credit = blocker; d.reflected = true; d.launchId++;
+  blocker.blockT = Math.min(blocker.blockT, 0.12);
+  spawnRing(d.pos, tmp2, blocker.color, 2.2, 0.35);
+  netFx('r', d.pos, tmp2, blocker);
+  sfx('block');
+}
+function hit(d, victim) {
+  const returning = d.state === 'returning';
+  const credit = returning ? d.owner : d.credit;
+  let dmg, label;
+  if (returning) { dmg = 10; label = 'RECALL'; }
+  else {
+    dmg = 12 + d.bounces * 8 + (d.reflected ? 10 : 0) + Math.round(Math.max(0, d.vel.length() - DISC_SPEED) * 0.6);
+    label = d.reflected ? 'REFLECT' : d.bounces > 0 ? 'BANK ×' + d.bounces : 'DIRECT';
+    if (d.bounces > 0) credit.banks++;
+    if (d.reflected) credit.reflects++;
+  }
+  credit.dmg += dmg; credit.hits++;
+  tmp.set(d.vel.x, 0, d.vel.z).normalize();
+  victim.vel.x += tmp.x * 13; victim.vel.z += tmp.z * 13;
+  victim.vel.y = Math.max(victim.vel.y, 6.5); victim.onGround = false;
+  victim.invuln = INVULN; victim.flash = 1;
+  if (net.role === 'host' && net.phase === 'play' && victim === cpu) net.gh = { n: net.gh.n + 1, x: r2(tmp.x), z: r2(tmp.z) };
+  chestOf(victim, tmp2); tmp2.y += 1.2;
+  floatText(tmp2, label + ' +' + dmg, credit.color);
+  netFx('h', tmp2, null, credit, label + ' +' + dmg);
+  spawnRing(chestOf(victim, tmp2), tmp.copy(camera.position).sub(tmp2), credit.color, 2.5, 0.4);
+  if (victim === player) { state.shake = 0.55; state.hurt = 1; }
+  sfx('hit');
+  startReturn(d);
+}
+function onBounce(d, axis, side) {
+  tmp.copy(d.pos);
+  tmp[axis] = axis === 'y' ? (side > 0 ? CEIL - 0.03 : 0.03) : side * (HALF - 0.03);
+  tmp2.set(0, 0, 0); tmp2[axis] = -side;
+  spawnRing(tmp, tmp2, d.color, 1, 0.55);
+  netFx('b', tmp, tmp2, d.owner);
+  if (d.state === 'flying') {
+    d.bounces++;
+    if (d.bounces >= MAX_BOUNCES) startReturn(d);
+  }
+  const near = 1 - clamp(d.pos.distanceTo(camera.position) / 30, 0, 0.85);
+  sfx('bounce', near);
+}
+
+function updateDisc(d, dt) {
+  if (d.state === 'held') { d.mesh.visible = d.light.visible = d.trail.visible = false; return; }
+  d.mesh.visible = d.light.visible = d.trail.visible = true;
+  d.life += dt;
+  const steps = Math.max(1, Math.ceil(d.vel.length() * dt / 0.25)), h = dt / steps;
+  for (let i = 0; i < steps && d.state !== 'held'; i++) {
+    if (d.state === 'returning') {
+      d.returnT += h;
+      chestOf(d.owner, tmp);
+      tmp.sub(d.pos);
+      const dist = tmp.length();
+      if (dist < 1.5 || d.returnT > 3.5) { catchDisc(d); break; }
+      tmp.multiplyScalar(RETURN_SPEED / dist);
+      d.vel.lerp(tmp, 1 - Math.exp(-7 * h));
+    }
+    d.pos.addScaledVector(d.vel, h);
+    for (const a of AXES) {
+      if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); onBounce(d, a, 1); }
+      else if (d.pos[a] < BMIN[a]) { d.pos[a] = 2 * BMIN[a] - d.pos[a]; d.vel[a] = Math.abs(d.vel[a]); onBounce(d, a, -1); }
+    }
+    if (d.state === 'held') break;
+    const victim = d.state === 'returning' ? other(d.owner) : d.target;
+    if (victim.invuln <= 0) {
+      const dist = distToFighter(d.pos, victim);
+      if (victim.blockT > 0 && d.state === 'flying' && dist < 1.8 && inFront(victim, d.pos)) deflect(d, victim);
+      else if (dist < PLAYER_R + DISC_R) { hit(d, victim); }
+    }
+  }
+  if (d.state === 'flying' && d.life > 4.5) startReturn(d);
+  discVisual(d, dt);
+}
+function discVisual(d, dt) {
+  if (d.state === 'held') { d.mesh.visible = d.light.visible = d.trail.visible = false; return; }
+  d.mesh.visible = d.light.visible = d.trail.visible = true;
+  d.mesh.position.copy(d.pos);
+  d.mesh.rotation.y += dt * 22;
+  d.mesh.rotation.z = Math.sin(d.life * 3) * 0.25;
+  d.light.position.copy(d.pos);
+  const arr = d.trail.geometry.attributes.position.array;
+  arr.copyWithin(3, 0, (d.trailN - 1) * 3);
+  arr[0] = d.pos.x; arr[1] = d.pos.y; arr[2] = d.pos.z;
+  d.trail.geometry.attributes.position.needsUpdate = true;
+}
+
+let clashCd = 0;
+function discClash(dt) {
+  clashCd -= dt;
+  const a = player.disc, b = cpu.disc;
+  if (a.state === 'held' || b.state === 'held' || clashCd > 0) return;
+  if (a.pos.distanceTo(b.pos) > DISC_R * 2 + 0.15) return;
+  const n = tmp.subVectors(a.pos, b.pos).normalize();
+  const an = a.vel.dot(n), bn = b.vel.dot(n);
+  if (an - bn < 0) { a.vel.addScaledVector(n, bn - an); b.vel.addScaledVector(n, an - bn); }
+  clashCd = 0.15;
+  spawnRing(tmp2.addVectors(a.pos, b.pos).multiplyScalar(0.5), tmp3.copy(camera.position).sub(tmp2), 0xffffff, 2.5, 0.35);
+  floatText(tmp2, 'CLASH', 0xffffff);
+  netFx('c', tmp2, null, null);
+  sfx('clash');
+}
+
+// ---------- Fighter physics ----------
+function physics(f, dt) {
+  if (f.dashT > 0) {
+    f.dashT -= dt;
+    f.vel.x = f.dashDir.x * DASH_V; f.vel.z = f.dashDir.z * DASH_V;
+  } else {
+    const k = Math.min(1, (f.onGround ? 12 : 3) * dt);
+    f.vel.x += (f.wish.x - f.vel.x) * k;
+    f.vel.z += (f.wish.z - f.vel.z) * k;
+  }
+  f.vel.y -= GRAV * dt;
+  f.pos.addScaledVector(f.vel, dt);
+  if (f.pos.y <= 0) { f.pos.y = 0; if (f.vel.y < 0) f.vel.y = 0; f.onGround = true; } else f.onGround = false;
+  if (f.pos.y + PLAYER_H > CEIL) { f.pos.y = CEIL - PLAYER_H; f.vel.y = Math.min(0, f.vel.y); }
+  const lim = HALF - PLAYER_R;
+  for (const a of ['x', 'z']) {
+    if (f.pos[a] > lim) { f.pos[a] = lim; f.vel[a] = Math.min(0, f.vel[a]); }
+    if (f.pos[a] < -lim) { f.pos[a] = -lim; f.vel[a] = Math.max(0, f.vel[a]); }
+  }
+  f.dashCd = Math.max(0, f.dashCd - dt);
+  f.blockT = Math.max(0, f.blockT - dt);
+  f.blockCd = Math.max(0, f.blockCd - dt);
+  f.invuln = Math.max(0, f.invuln - dt);
+  f.flash = Math.max(0, f.flash - dt * 3.5);
+  fighterVisual(f, dt);
+}
+function fighterVisual(f, dt) {
+  const m = f.mesh;
+  m.group.position.copy(f.pos);
+  m.group.rotation.y = f.yaw;
+  const sp = Math.hypot(f.vel.x, f.vel.z);
+  f.walk += sp * dt * 1.4;
+  const swing = f.onGround ? Math.sin(f.walk) * 0.7 * Math.min(1, sp / MOVE) : 0.5;
+  m.legs[0].rotation.x = f.onGround ? swing : -0.6;
+  m.legs[1].rotation.x = f.onGround ? -swing : 0.3;
+  m.group.rotation.x = 0;
+  m.group.rotation.z = 0;
+  const so = f.blockT > 0 ? 0.35 + 0.3 * (f.blockT / BLOCK_T) : 0;
+  m.shield.material.opacity = so;
+  m.shieldRim.material.opacity = so > 0 ? 1 : 0;
+  m.shield.visible = so > 0;
+  m.backDisc.visible = f.disc.state === 'held';
+  m.body.emissive.setRGB(f.flash, f.flash, f.flash);
+  m.group.visible = !(f.invuln > 0 && Math.floor(f.invuln * 24) % 2 === 1);
+  m.foot.position.set(f.pos.x, 0.03, f.pos.z);
+  m.blob.position.set(f.pos.x, 0.025, f.pos.z);
+  const hFade = clamp(1 - f.pos.y / 8, 0.15, 1);
+  m.blob.material.opacity = 0.55 * hFade;
+  m.foot.material.opacity = 0.7 * hFade;
+}
+function separate() {
+  const dx = player.pos.x - cpu.pos.x, dz = player.pos.z - cpu.pos.z, d = Math.hypot(dx, dz);
+  if (d < PLAYER_R * 2 && Math.abs(player.pos.y - cpu.pos.y) < PLAYER_H && d > 1e-4) {
+    const push = (PLAYER_R * 2 - d) / 2;
+    player.pos.x += dx / d * push; player.pos.z += dz / d * push;
+    cpu.pos.x -= dx / d * push; cpu.pos.z -= dz / d * push;
+  }
+}
+
+// ---------- CPU brain ----------
+function aiInit(f) {
+  f.ai = { strafe: Math.random() < 0.5 ? 1 : -1, strafeT: rand(1, 2.5), throwT: rand(0.8, 1.6), handled: '', jumpT: rand(2, 6), prefDist: rand(8, 12), faceT: 0, faceYaw: 0 };
+}
+function planShot(f, opp, cfg) {
+  const hand = handPos(f, new V3());
+  const tgt = chestOf(opp, new V3());
+  const lead = hand.distanceTo(tgt) / DISC_SPEED;
+  tgt.x += opp.vel.x * lead * 0.7; tgt.z += opp.vel.z * lead * 0.7;
+  clampBounds(tgt);
+  const direct = tmp2.subVectors(tgt, hand).normalize().clone();
+  const banks = [];
+  for (const a of AXES) for (const s of [BMIN, BMAX]) {
+    const m = tgt.clone(); m[a] = 2 * s[a] - m[a];
+    const dir = m.sub(hand).normalize();
+    const pts = tracePath(hand, dir, 1, 70);
+    if (pts.length >= 3 && pathDist(pts.slice(1), tgt) < 1.0 && pts[0].distanceTo(pts[1]) > 2) banks.push(dir);
+  }
+  let choice = direct;
+  if (banks.length && Math.random() < cfg.bankP) choice = banks[Math.floor(Math.random() * banks.length)];
+  choice.x += gauss() * cfg.aimErr; choice.y += gauss() * cfg.aimErr * 0.6; choice.z += gauss() * cfg.aimErr;
+  return choice.normalize();
+}
+function aiUpdate(f, opp, cfg, dt) {
+  const ai = f.ai;
+  const dx = opp.pos.x - f.pos.x, dz = opp.pos.z - f.pos.z, dist = Math.hypot(dx, dz) || 1;
+  ai.faceT -= dt;
+  const want = ai.faceT > 0 ? ai.faceYaw : Math.atan2(-dx, -dz);
+  f.yaw = approachAngle(f.yaw, want, (ai.faceT > 0 ? 30 : 8) * dt);
+
+  ai.strafeT -= dt;
+  if (ai.strafeT <= 0) { ai.strafe *= -1; ai.strafeT = rand(0.7, 2.4); ai.prefDist = rand(7, 13); }
+  const tx = dx / dist, tz = dz / dist;
+  let wx = -tz * ai.strafe * 0.85, wz = tx * ai.strafe * 0.85;
+  const radial = clamp((dist - ai.prefDist) / 4, -1, 1);
+  wx += tx * radial; wz += tz * radial;
+  const m = HALF - 3;
+  if (f.pos.x > m) wx -= (f.pos.x - m); if (f.pos.x < -m) wx += (-m - f.pos.x);
+  if (f.pos.z > m) wz -= (f.pos.z - m); if (f.pos.z < -m) wz += (-m - f.pos.z);
+  const wl = Math.hypot(wx, wz);
+  if (wl > 0.15) f.wish.set(wx / wl * MOVE * 0.85, 0, wz / wl * MOVE * 0.85); else f.wish.set(0, 0, 0);
+
+  // incoming threats
+  for (const d of [opp.disc, f.disc]) {
+    if (d.state === 'held') continue;
+    const victim = d.state === 'returning' ? other(d.owner) : d.target;
+    if (victim !== f) continue;
+    const r = chestOf(f, tmp).sub(d.pos);
+    const vv = d.vel.lengthSq(); if (vv < 1) continue;
+    const t = r.dot(d.vel) / vv;
+    if (t <= 0 || t > cfg.react) continue;
+    const c = tmp2.copy(r).addScaledVector(d.vel, -t);
+    const keyId = d.launchId + ':' + d.bounces + ':' + d.state;
+    if (c.length() > 2.2 || ai.handled === keyId) continue;
+    ai.handled = keyId;
+    if (d.state === 'flying' && f.disc.state === 'held' && f.blockCd <= 0 && Math.random() < cfg.blockP) {
+      ai.faceYaw = Math.atan2(-(d.pos.x - f.pos.x), -(d.pos.z - f.pos.z)); ai.faceT = BLOCK_T;
+      f.yaw = ai.faceYaw;
+      tryBlock(f);
+    } else if (Math.random() < cfg.dodgeP) {
+      c.y = 0;
+      if (c.lengthSq() < 0.04) c.set(-d.vel.z, 0, d.vel.x).multiplyScalar(Math.random() < 0.5 ? 1 : -1);
+      c.normalize();
+      if (f.dashCd <= 0) tryDash(f, c); else tryJump(f);
+    }
+  }
+
+  ai.throwT -= dt;
+  if (f.disc.state === 'held' && ai.throwT <= 0 && opp.invuln < 0.2 && f.blockT <= 0) {
+    throwDisc(f, planShot(f, opp, cfg));
+    ai.throwT = rand(cfg.throwDelay[0], cfg.throwDelay[1]);
+  }
+  ai.jumpT -= dt;
+  if (ai.jumpT <= 0) { ai.jumpT = rand(2, 6); tryJump(f); }
+}
+
+// ---------- Player input ----------
+const keys = {};
+const cam = { pos: new V3(), dir: new V3(), orbit: 0 };
+let sens = 1;
+function playerInput(dt) {
+  const f = forwardOf(player, tmp), r = rightOf(player, tmp2);
+  const fw = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0), st = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  player.wish.set(0, 0, 0).addScaledVector(f, fw).addScaledVector(r, st);
+  if (player.wish.lengthSq() > 0) player.wish.normalize().multiplyScalar(MOVE);
+  player.yaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * 2.4 * dt;
+  player.pitch = clamp(player.pitch + ((keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)) * 1.6 * dt, -1.2, 1.3);
+}
+function playerAimDir(out) {
+  const o = clampBounds(cam.pos.clone());
+  const t = rayExit(o, cam.dir);
+  const aim = o.clone().addScaledVector(cam.dir, t);
+  const chest = chestOf(cpu, new V3());
+  const tc = tmp.subVectors(chest, cam.pos).dot(cam.dir);
+  if (tc > 0 && tc < t) {
+    const cl = cam.pos.clone().addScaledVector(cam.dir, tc);
+    if (cl.distanceTo(chest) < 1.3) aim.copy(cl);
+  }
+  return out.subVectors(aim, handPos(player, tmp2)).normalize();
+}
+function playerFire() {
+  const d = player.disc;
+  if (net.match) {
+    if (!netLive()) return;
+    if (net.role === 'guest') {
+      // The host simulates every disc: send the throw or recall as a counter it can't miss.
+      if (d.state === 'held' && performance.now() - net.throwAt > 400) {
+        const dir = playerAimDir(new V3());
+        net.act.t++; net.act.dir = [r2(dir.x), r2(dir.y), r2(dir.z)];
+        net.throwAt = performance.now(); net.lastSend = 0;
+      } else if (d.state === 'flying') { net.act.r++; net.lastSend = 0; }
+      return;
+    }
+  }
+  if (d.state === 'held') throwDisc(player, playerAimDir(new V3()));
+  else if (d.state === 'flying') startReturn(d);
+}
+
+// aim preview line
+const previewGeo = new THREE.BufferGeometry();
+previewGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(5 * 3), 3));
+const preview = new THREE.Line(previewGeo, new THREE.LineDashedMaterial({ color: COL_YOU, dashSize: 0.45, gapSize: 0.35, transparent: true, opacity: 0.45, depthWrite: false }));
+preview.frustumCulled = false;
+scene.add(preview);
+function updatePreview() {
+  const show = state.mode === 'playing' && player.disc.state === 'held';
+  preview.visible = show;
+  if (!show) return;
+  const pts = tracePath(handPos(player, new V3()), playerAimDir(new V3()), 2, 80);
+  const arr = previewGeo.attributes.position.array;
+  pts.forEach((p, i) => { arr[i * 3] = p.x; arr[i * 3 + 1] = p.y; arr[i * 3 + 2] = p.z; });
+  previewGeo.setDrawRange(0, pts.length);
+  previewGeo.attributes.position.needsUpdate = true;
+  preview.computeLineDistances();
+}
+
+// ---------- Camera ----------
+function updateCamera(dt) {
+  if (state.mode === 'playing' || state.mode === 'paused') {
+    const p = player;
+    cam.dir.set(-Math.sin(p.yaw) * Math.cos(p.pitch), Math.sin(p.pitch), -Math.cos(p.yaw) * Math.cos(p.pitch));
+    cam.pos.set(p.pos.x, p.pos.y + 2.2, p.pos.z).addScaledVector(cam.dir, -5.2).addScaledVector(rightOf(p, tmp), 1.25);
+    cam.pos.x = clamp(cam.pos.x, -HALF + 0.3, HALF - 0.3);
+    cam.pos.z = clamp(cam.pos.z, -HALF + 0.3, HALF - 0.3);
+    cam.pos.y = clamp(cam.pos.y, 0.3, CEIL - 0.3);
+    camera.position.copy(cam.pos);
+    if (state.shake > 0 && !reducedMotion) {
+      camera.position.x += (Math.random() - 0.5) * state.shake * 0.5;
+      camera.position.y += (Math.random() - 0.5) * state.shake * 0.5;
+    }
+    camera.lookAt(tmp.copy(cam.pos).add(cam.dir));
+  } else {
+    cam.orbit += dt * 0.09;
+    camera.position.set(Math.sin(cam.orbit) * 9.5, 6 + Math.sin(cam.orbit * 0.7) * 1.2, Math.cos(cam.orbit) * 9.5);
+    camera.lookAt(0, 2.5, 0);
+  }
+  state.shake = Math.max(0, state.shake - dt * 1.6);
+}
+
+// ---------- Game state / UI ----------
+const state = { mode: 'menu', time: ROUND, diff: 'normal', shake: 0, hurt: 0, wasLocked: false };
+const player = makeFighter('YOU', COL_YOU, false);
+const cpu = makeFighter('CPU', COL_CPU, true);
+
+function resetFighter(f, z, yaw) {
+  f.pos.set(0, 0, z); f.vel.set(0, 0, 0); f.wish.set(0, 0, 0);
+  f.yaw = yaw; f.pitch = 0.08; f.dashT = f.dashCd = f.blockT = f.blockCd = f.invuln = f.flash = 0;
+  f.dmg = f.hits = f.throws = f.banks = f.reflects = 0;
+  f.disc.state = 'held';
+  aiInit(f);
+}
+resetFighter(player, 7, 0);
+resetFighter(cpu, -7, Math.PI);
+
+const $ = id => document.getElementById(id);
+const ui = {
+  hud: $('hud'), menu: $('menu'), pause: $('pause'), results: $('results'), lobby: $('lobby'),
+  banner: $('banner'), bannerBig: $('bannerBig'), bannerSmall: $('bannerSmall'),
+  youDmg: $('youDmg'), cpuDmg: $('cpuDmg'), youHits: $('youHits'), cpuHits: $('cpuHits'),
+  clock: $('clock'), diffLabel: $('diffLabel'), chip: $('discChip'), dash: $('dashBar'), shield: $('shieldBar'),
+  cross: $('crosshair'), vignette: $('vignette'),
+};
+function show(name) {
+  ui.menu.hidden = name !== 'menu';
+  ui.pause.hidden = name !== 'paused';
+  ui.results.hidden = name !== 'results';
+  ui.lobby.hidden = name !== 'lobby';
+  ui.hud.hidden = !(name === 'playing' || name === 'paused');
+}
+function lock() {
+  try {
+    const p = renderer.domElement.requestPointerLock();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* pointer lock unavailable: mouse movement still aims */ }
+}
+function unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
+
+function startRound() {
+  audio();
+  for (const f of floats) f.el.remove();
+  floats.length = 0;
+  resetFighter(player, 7, 0);
+  resetFighter(cpu, -7, Math.PI);
+  state.time = ROUND; state.mode = 'playing'; state.hurt = 0;
+  ui.diffLabel.textContent = state.diff + ' CPU';
+  show('playing');
+  lock();
+}
+function pause() {
+  if (state.mode !== 'playing') return;
+  $('pauseEyebrow').textContent = net.match ? 'The match keeps running' : 'Match paused';
+  $('quitBtn').textContent = net.match ? 'Leave match' : 'Quit to menu';
+  state.mode = 'paused'; show('paused'); unlock();
+  $('resumeBtn').focus();
+}
+function resume() { state.mode = 'playing'; show('playing'); lock(); }
+function toMenu() {
+  state.mode = 'menu'; show('menu'); unlock();
+  resetFighter(player, 7, 0); resetFighter(cpu, -7, Math.PI);
+}
+function endRound() {
+  state.mode = 'results'; unlock();
+  const y = player.dmg, c = cpu.dmg, online = !!net.match, foe = online ? 'Rival' : 'CPU';
+  $('resEyebrow').textContent = online ? 'Time · online match ' + net.code : 'Time · ' + state.diff + ' CPU';
+  $('resTitle').textContent = y > c ? 'You win' : y < c ? foe + ' wins' : 'Draw';
+  const guestWait = online && net.role === 'guest';
+  $('rematchBtn').disabled = guestWait;
+  $('rematchBtn').textContent = guestWait ? 'Waiting for host to rematch' : 'Rematch';
+  $('menuBtn').textContent = online ? 'Leave match' : 'Change difficulty';
+  $('resTitle').style.color = y > c ? 'var(--you)' : y < c ? 'var(--cpu)' : 'var(--ink)';
+  const acc = f => f.throws ? Math.round(f.hits / f.throws * 100) + '%' : '–';
+  const rows = [['Damage dealt', y, c], ['Hits', player.hits, cpu.hits], ['Throws', player.throws, cpu.throws], ['Accuracy', acc(player), acc(cpu)], ['Bank-shot hits', player.banks, cpu.banks], ['Reflect hits', player.reflects, cpu.reflects]];
+  $('resStats').innerHTML = '<span class="h"></span><span class="h y">YOU</span><span class="h c">' + foe.toUpperCase() + '</span>' +
+    rows.map(r => `<span>${r[0]}</span><span class="y">${r[1]}</span><span class="c">${r[2]}</span>`).join('');
+  show('results');
+  $('rematchBtn').focus();
+}
+
+let hudCache = {};
+function setText(el, k, v) { if (hudCache[k] !== v) { hudCache[k] = v; el.textContent = v; } }
+function updateHUD(dt) {
+  state.hurt = Math.max(0, state.hurt - dt * 2.2);
+  ui.vignette.style.opacity = String(state.hurt * 0.75);
+  if (ui.hud.hidden) return;
+  setText(ui.youDmg, 'yd', String(player.dmg));
+  setText(ui.cpuDmg, 'cd', String(cpu.dmg));
+  setText(ui.youHits, 'yh', String(player.hits));
+  setText(ui.cpuHits, 'ch', String(cpu.hits));
+  const t = Math.max(0, Math.ceil(state.time));
+  setText(ui.clock, 'clk', Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'));
+  ui.clock.classList.toggle('low', t <= 10);
+  const ds = player.disc.state;
+  setText(ui.chip, 'chip', ds === 'held' ? 'Disc ready' : ds === 'flying' ? 'In flight · click to recall' : 'Returning');
+  ui.chip.classList.toggle('out', ds !== 'held');
+  ui.cross.classList.toggle('empty', ds !== 'held');
+  ui.dash.style.width = (100 * (1 - player.dashCd / DASH_CD)) + '%';
+  ui.shield.style.width = (ds === 'held' ? 100 * (1 - player.blockCd / BLOCK_CD) : 0) + '%';
+  ui.shield.classList.toggle('off', ds !== 'held');
+}
+
+// ---------- Events ----------
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (state.mode !== 'playing') return;
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  if (e.code === 'Space') tryJump(player);
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryDash(player);
+  if (e.code === 'KeyQ') tryBlock(player);
+  if (e.code === 'Escape' || e.code === 'KeyP') pause();
+});
+addEventListener('keydown', e => { if (e.code === 'KeyM') muted = !muted; });
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (!net.match) pause(); });
+addEventListener('mousemove', e => {
+  if (state.mode !== 'playing') return;
+  const s = 0.0022 * sens;
+  player.yaw -= (e.movementX || 0) * s;
+  player.pitch = clamp(player.pitch - (e.movementY || 0) * s, -1.2, 1.3);
+});
+renderer.domElement.addEventListener('mousedown', e => {
+  if (state.mode !== 'playing') return;
+  if (!document.pointerLockElement) lock();
+  if (e.button === 0) playerFire();
+  if (e.button === 2) tryBlock(player);
+});
+addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('pointerlockchange', () => {
+  const locked = document.pointerLockElement === renderer.domElement;
+  if (!locked && state.wasLocked && state.mode === 'playing') pause();
+  state.wasLocked = locked;
+});
+document.querySelectorAll('.diff button').forEach(b => b.addEventListener('click', () => {
+  state.diff = b.dataset.diff;
+  document.querySelectorAll('.diff button').forEach(o => o.setAttribute('aria-checked', String(o === b)));
+}));
+$('startBtn').addEventListener('click', startRound);
+$('resumeBtn').addEventListener('click', resume);
+$('quitBtn').addEventListener('click', () => { if (net.match) netEnd('You left the match.'); else toMenu(); });
+$('rematchBtn').addEventListener('click', () => { if (!net.match) startRound(); else if (net.role === 'host') hostStart(); });
+$('menuBtn').addEventListener('click', () => { if (net.match) netEnd('You left the match.'); else toMenu(); });
+$('hostBtn').addEventListener('click', () => openMatch(newCode(), 'host'));
+function joinFromInput() {
+  const code = $('joinCode').value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{4}$/.test(code)) { $('netMsg').textContent = 'Enter the 4-character code your opponent sees.'; $('joinCode').focus(); return; }
+  openMatch(code, 'guest');
+}
+$('joinBtn').addEventListener('click', joinFromInput);
+$('joinCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinFromInput(); });
+$('leaveBtn').addEventListener('click', () => netEnd(''));
+$('copyBtn').addEventListener('click', () => {
+  const b = $('copyBtn');
+  try {
+    navigator.clipboard.writeText(net.code).then(() => { b.textContent = 'Copied'; }, () => { b.textContent = 'Copy blocked · read the code above'; });
+  } catch (e) { b.textContent = 'Copy blocked · read the code above'; }
+  setTimeout(() => { b.textContent = 'Copy code'; }, 2500);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  if (composer) composer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- Online ----------
+// Sides in network messages: 0 = host's fighter, 1 = guest's fighter.
+// Each page shows itself as `player` (cyan) and the other person as `cpu` (orange).
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const DISC_STATES = ['held', 'flying', 'returning'];
+const r3 = v => Math.round(v * 1000) / 1000;
+const num = v => (typeof v === 'number' && isFinite(v) ? v : 0);
+
+// Two transports share one shape: join(code, role) resolves { presence(obj), onPeers(fn, onError), leave() },
+// where onPeers delivers { peers: [{ peer, sameTab, kind, presence, updatedAt }] } like claude.ai's room.
+// Inside a claude.ai artifact the room capability carries the match; anywhere else PeerJS (WebRTC) does.
+function roomTransport(room) {
+  return { kind: 'room', join: code => room.join('dd-' + code.toLowerCase()) };
+}
+function peerTransport() {
+  return { kind: 'p2p', join: (code, role) => new Promise((resolve, reject) => {
+    const hostId = 'discduel-v1-' + code.toLowerCase();
+    const peer = role === 'host' ? new Peer(hostId) : new Peer();
+    let conn = null, theirs = null, theirAt = 0, mine = {}, myAt = Date.now(), myId = 'me', opened = false, closed = false;
+    let handlers = [], errHandlers = [];
+    const fail = (code, message) => { if (closed) return; errHandlers.forEach(fn => fn({ code, message })); };
+    const emit = () => {
+      const list = [{ peer: myId, sameTab: true, isMe: true, kind: 'viewer', presence: mine, updatedAt: myAt }];
+      if (conn && conn.open && theirs) list.push({ peer: conn.peer, sameTab: false, isMe: false, kind: 'viewer', presence: theirs, updatedAt: theirAt });
+      handlers.forEach(h => h({ peers: list, joined: [], left: [], updated: [] }));
+    };
+    const attach = c => {
+      conn = c;
+      c.on('open', () => { try { c.send(mine); } catch (e) { /* retried on next presence */ } emit(); });
+      c.on('data', d => { if (d && typeof d === 'object' && !Array.isArray(d)) { theirs = d; theirAt = Date.now(); emit(); } });
+      c.on('close', () => { if (conn === c) { conn = null; theirs = null; emit(); } });
+      c.on('error', () => {});
+    };
+    peer.on('open', id => {
+      myId = id; opened = true;
+      if (role === 'guest') {
+        const c = peer.connect(hostId, { reliable: false, serialization: 'json' });
+        attach(c);
+        setTimeout(() => { if (!c.open && conn === c) fail('connect_failed', 'no data channel'); }, 15000);
+      }
+      resolve(api);
+    });
+    peer.on('connection', c => {
+      if (role !== 'host') { c.close(); return; }
+      if (conn && conn.open) {
+        // Match is full: tell the newcomer, then hang up.
+        c.on('open', () => { try { c.send({ k: 'full' }); } catch (e) {} setTimeout(() => c.close(), 800); });
+        return;
+      }
+      attach(c);
+    });
+    peer.on('error', e => {
+      const t = e && e.type;
+      if (!opened) { peer.destroy(); reject({ code: t === 'unavailable-id' ? 'code_taken' : 'network', message: String(e && e.message) }); return; }
+      if (t === 'peer-unavailable') fail('not_found', 'no host');
+      else if (t === 'webrtc' || t === 'negotiation-failed') fail('connect_failed', String(e && e.message));
+    });
+    // Losing the matchmaking server leaves an open match running; reconnect so a host can still accept a guest.
+    peer.on('disconnected', () => { if (!closed) { try { peer.reconnect(); } catch (e) {} } });
+    const api = {
+      presence: async p => {
+        mine = Object.assign({}, mine, p); myAt = Date.now();
+        if (conn && conn.open) { try { conn.send(mine); } catch (e) {} }
+      },
+      onPeers: (h, onError) => {
+        handlers.push(h);
+        if (onError) errHandlers.push(onError);
+        setTimeout(emit, 0);
+        return () => { handlers = handlers.filter(x => x !== h); errHandlers = errHandlers.filter(x => x !== onError); };
+      },
+      leave: async () => { closed = true; try { if (conn) conn.close(); } catch (e) {} peer.destroy(); },
+    };
+  }) };
+}
+
+(async () => {
+  // claude.ai shows artifacts in a frame; a top-level page is on its own website and can go straight to PeerJS.
+  let framed = true;
+  try { framed = window.top !== window; } catch (e) { framed = true; }
+  for (let i = 0; framed && i < 30 && !(window.claude && window.claude.use); i++) await new Promise(r => setTimeout(r, 100));
+  const inArtifact = !!(window.claude && window.claude.use);
+  let room = null;
+  try { room = inArtifact ? await window.claude.use('room') : null; } catch (e) { room = null; }
+  // The artifact's sandbox blocks PeerJS's servers, so inside claude.ai only the room transport can work.
+  net.room = room ? roomTransport(room) : (!inArtifact && window.Peer ? peerTransport() : null);
+  $('online').hidden = !net.room;
+  $('offlineNote').hidden = !!net.room;
+})();
+
+function netLive() { return net.role === 'host' ? net.phase === 'play' : !!net.opp && net.opp.ph === 'play'; }
+function netFx(type, pos, nrm, f, text) {
+  if (net.role !== 'host' || net.phase !== 'play') return;
+  const e = [++net.fxSeq, type, pos ? [r2(pos.x), r2(pos.y), r2(pos.z)] : 0, nrm ? [r2(nrm.x), r2(nrm.y), r2(nrm.z)] : 0, f ? (f === player ? 0 : 1) : -1];
+  if (text) e.push(text);
+  net.fx.push(e);
+  if (net.fx.length > 10) net.fx.shift();
+}
+function packF(f) {
+  return [r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r2(f.vel.x), r2(f.vel.y), r2(f.vel.z), r3(f.yaw), r3(f.pitch), r2(f.blockT), r2(f.invuln), r2(f.flash)];
+}
+function packD(d) {
+  return [DISC_STATES.indexOf(d.state), r2(d.pos.x), r2(d.pos.y), r2(d.pos.z), r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)];
+}
+function netSend(now) {
+  if (!net.match || now - net.lastSend < 33) return;
+  net.lastSend = now;
+  const p = net.role === 'host'
+    ? { k: 'h', gp: net.oppPeer, ph: net.phase, ct: r2(net.countT), tm: r2(state.time), f: packF(player),
+        d: [packD(player.disc), packD(cpu.disc)],
+        sc: [player.dmg, player.hits, player.throws, player.banks, player.reflects, cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects],
+        gh: net.gh, fx: net.fx }
+    : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
+  net.match.presence(p).catch(() => {});
+}
+
+function newCode() {
+  let code = '';
+  for (let i = 0; i < 4; i++) code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  return code;
+}
+const NET_ERRORS = {
+  not_permitted: 'Online matches are not available to your account on this page.',
+  network: 'Could not reach the matchmaking server. Check your internet connection and try again.',
+  not_found: 'No open match with that code. Check the code with the host, and make sure their match screen is still open.',
+  connect_failed: 'Found the host but could not connect to them directly. One of your networks may block peer-to-peer connections (common on work, school or mobile networks).',
+};
+let joining = false;
+async function openMatch(code, role) {
+  if (!net.room || net.match || joining) return;
+  joining = true;
+  audio();
+  $('netMsg').textContent = 'Connecting…';
+  let m = null;
+  for (let attempt = 0; attempt < 3 && !m; attempt++) {
+    try { m = await net.room.join(code, role); }
+    catch (e) {
+      // A taken code means another match is using it; hosts just roll a new one.
+      if (e && e.code === 'code_taken' && role === 'host') { code = newCode(); continue; }
+      $('netMsg').textContent = NET_ERRORS[e && e.code] || 'Could not connect. Try again in a moment.';
+      joining = false;
+      return;
+    }
+  }
+  joining = false;
+  if (!m) { $('netMsg').textContent = 'Could not create a match. Try again.'; return; }
+  Object.assign(net, {
+    match: m, role, code, phase: role === 'host' ? 'wait' : 'off', countT: 0, oppPeer: null, opp: null, oppAt: 0,
+    fx: [], fxSeen: -1, ghSeen: -1, gh: { n: 0, x: 0, z: 0 }, act: { t: 0, r: 0, dir: [0, 0, -1] }, actSeen: { t: 0, r: 0 }, lastSend: 0,
+  });
+  $('netMsg').textContent = '';
+  $('lobbyCode').textContent = code;
+  $('lobbyMsg').textContent = role === 'host' ? 'Send this code to your opponent. The match starts as soon as they join.' : 'Looking for match ' + code + '…';
+  state.mode = 'lobby'; show('lobby');
+  net.unsub = m.onPeers(onMatchPeers, e => netEnd(NET_ERRORS[e && e.code] || 'Lost the connection to the match.'));
+  netSend(performance.now());
+  if (role === 'guest') setTimeout(() => {
+    if (net.match === m && !net.opp && state.mode === 'lobby') $('lobbyMsg').textContent = 'No match with code ' + code + ' yet. Check the code, or keep waiting for the host.';
+  }, 8000);
+}
+function netEnd(msg) {
+  const m = net.match;
+  if (net.unsub) net.unsub();
+  Object.assign(net, { match: null, role: null, phase: 'off', unsub: null, opp: null, oppPeer: null });
+  if (m) m.leave().catch(() => {});
+  $('cpuTag').textContent = 'CPU';
+  ui.banner.hidden = true;
+  toMenu();
+  $('netMsg').textContent = msg || '';
+}
+function onMatchPeers(ch) {
+  if (!net.match) return;
+  const me = ch.peers.find(p => p.sameTab);
+  if (me) net.myPeer = me.peer;
+  const others = ch.peers.filter(p => !p.sameTab && p.kind === 'viewer' && p.presence);
+  if (net.role === 'host') {
+    let g = others.find(p => p.peer === net.oppPeer && p.presence.k === 'g');
+    if (!g && net.oppPeer) { netEnd('Your opponent left the match.'); return; }
+    if (!g) g = others.find(p => p.presence.k === 'g');
+    if (!g) return;
+    const first = net.oppPeer !== g.peer;
+    net.oppPeer = g.peer; net.opp = g.presence; net.oppAt = g.updatedAt;
+    if (first) hostStart();
+  } else {
+    if (others.some(p => p.presence.k === 'full')) { netEnd('Match ' + net.code + ' already has two players.'); return; }
+    const h = others.find(p => p.presence.k === 'h');
+    if (!h) { if (net.oppPeer) netEnd('The host left the match.'); return; }
+    if (h.presence.gp && net.myPeer && h.presence.gp !== net.myPeer) {
+      if (state.mode === 'lobby') $('lobbyMsg').textContent = 'Match ' + net.code + ' already has two players.';
+      return;
+    }
+    net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt;
+    const ph = h.presence.ph;
+    if ((ph === 'count' || ph === 'play') && (state.mode === 'lobby' || state.mode === 'results')) beginOnlineRound();
+    else if (ph === 'over' && (state.mode === 'playing' || state.mode === 'paused')) { applyHostState(h.presence, 0, 0); endRound(); }
+    else if (ph === 'wait' && state.mode === 'lobby') $('lobbyMsg').textContent = 'Found the host. Starting…';
+  }
+}
+function beginOnlineRound() {
+  audio();
+  for (const f of floats) f.el.remove();
+  floats.length = 0;
+  if (net.role === 'host') { resetFighter(player, 7, 0); resetFighter(cpu, -7, Math.PI); }
+  else { resetFighter(player, -7, Math.PI); resetFighter(cpu, 7, 0); }
+  state.time = ROUND; state.hurt = 0; state.mode = 'playing';
+  ui.diffLabel.textContent = 'Online · ' + net.code;
+  $('cpuTag').textContent = 'RIVAL';
+  show('playing');
+  lock();
+}
+function hostStart() {
+  net.phase = 'count'; net.countT = 3; net.fx.length = 0; net.lastSend = 0;
+  const a = net.opp && Array.isArray(net.opp.a) ? net.opp.a : [0, 0];
+  net.actSeen = { t: num(a[0]), r: num(a[1]) };
+  beginOnlineRound();
+}
+function hostActions() {
+  const a = net.opp && net.opp.a;
+  if (!Array.isArray(a)) return;
+  if (num(a[0]) > net.actSeen.t) {
+    net.actSeen.t = num(a[0]);
+    const dir = new V3(num(a[2]), num(a[3]), num(a[4]));
+    if (cpu.disc.state === 'held' && dir.lengthSq() > 0.01) throwDisc(cpu, dir);
+  }
+  if (num(a[1]) > net.actSeen.r) {
+    net.actSeen.r = num(a[1]);
+    if (cpu.disc.state === 'flying') startReturn(cpu.disc);
+  }
+}
+function remoteFighter(f, pk, age, dt) {
+  if (Array.isArray(pk) && pk.length >= 11) {
+    tmp.set(num(pk[0]) + num(pk[3]) * age, Math.max(0, num(pk[1]) + num(pk[4]) * age), num(pk[2]) + num(pk[5]) * age);
+    const lim = HALF - PLAYER_R;
+    tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
+    const k = 1 - Math.exp(-20 * dt);
+    if (f.pos.distanceTo(tmp) > 4) f.pos.copy(tmp); else f.pos.lerp(tmp, k);
+    f.vel.set(num(pk[3]), num(pk[4]), num(pk[5]));
+    const dy = ((num(pk[6]) - f.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    f.yaw += dy * k;
+    f.pitch = num(pk[7]);
+    f.blockT = num(pk[8]);
+    f.onGround = f.pos.y < 0.05;
+  }
+  f.flash = Math.max(0, f.flash - dt * 3.5);
+  if (net.role === 'guest' && Array.isArray(pk)) { f.invuln = num(pk[9]); f.flash = Math.max(f.flash, num(pk[10])); }
+  fighterVisual(f, dt);
+}
+function remoteDisc(d, pk, age, dt) {
+  const st = Array.isArray(pk) ? DISC_STATES[pk[0]] : null;
+  if (!st || st === 'held') { d.state = 'held'; discVisual(d, dt); return; }
+  tmp.set(num(pk[1]) + num(pk[4]) * age, num(pk[2]) + num(pk[5]) * age, num(pk[3]) + num(pk[6]) * age);
+  for (const a of AXES) {
+    let v = tmp[a];
+    if (v > BMAX[a]) v = 2 * BMAX[a] - v;
+    if (v < BMIN[a]) v = 2 * BMIN[a] - v;
+    tmp[a] = clamp(v, BMIN[a], BMAX[a]);
+  }
+  if (d.state === 'held') {
+    d.pos.copy(tmp);
+    const arr = d.trail.geometry.attributes.position.array;
+    for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+  } else if (d.pos.distanceTo(tmp) > 3) d.pos.copy(tmp);
+  else d.pos.lerp(tmp, 1 - Math.exp(-30 * dt));
+  d.vel.set(num(pk[4]), num(pk[5]), num(pk[6]));
+  d.state = st; d.life += dt;
+  discVisual(d, dt);
+}
+function applyHostState(h, age, dt) {
+  state.time = num(h.tm);
+  const s = h.sc;
+  if (Array.isArray(s) && s.length >= 10) {
+    [cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects] = s.slice(0, 5).map(num);
+    [player.dmg, player.hits, player.throws, player.banks, player.reflects] = s.slice(5, 10).map(num);
+  }
+  if (!dt) return;
+  if (Array.isArray(h.d)) { remoteDisc(cpu.disc, h.d[0], age, dt); remoteDisc(player.disc, h.d[1], age, dt); }
+  const gh = h.gh;
+  if (gh && typeof gh.n === 'number') {
+    if (net.ghSeen < 0) net.ghSeen = gh.n;
+    else if (gh.n > net.ghSeen) {
+      net.ghSeen = gh.n;
+      player.vel.x += num(gh.x) * 13; player.vel.z += num(gh.z) * 13;
+      player.vel.y = Math.max(player.vel.y, 6.5); player.onGround = false;
+      player.invuln = INVULN; player.flash = 1; state.shake = 0.55; state.hurt = 1;
+    }
+  }
+  if (Array.isArray(h.fx)) {
+    if (net.fxSeen < 0) net.fxSeen = h.fx.length ? num(h.fx[h.fx.length - 1][0]) : 0;
+    else for (const e of h.fx) if (Array.isArray(e) && num(e[0]) > net.fxSeen) { net.fxSeen = num(e[0]); playFx(e); }
+  }
+}
+function playFx(e) {
+  const type = e[1], side = e[4];
+  const vec = a => (Array.isArray(a) ? new V3(num(a[0]), num(a[1]), num(a[2])) : null);
+  const pos = vec(e[2]), nrm = vec(e[3]);
+  const col = side === 1 ? player.color : side === 0 ? cpu.color : 0xffffff;
+  const near = pos ? 1 - clamp(pos.distanceTo(camera.position) / 30, 0, 0.85) : 1;
+  const text = typeof e[5] === 'string' ? e[5].slice(0, 24) : '';
+  if (type === 'b' && pos && nrm) { spawnRing(pos, nrm, col, 1, 0.55); sfx('bounce', near); }
+  else if (type === 'h' && pos) {
+    floatText(pos, text, col);
+    const c = pos.clone(); c.y -= 1.2;
+    spawnRing(c, tmp.copy(camera.position).sub(c), col, 2.5, 0.4);
+    sfx('hit');
+  }
+  else if (type === 'r' && pos && nrm) { spawnRing(pos, nrm, col, 2.2, 0.35); sfx('block'); }
+  else if (type === 'c' && pos) { spawnRing(pos, tmp.copy(camera.position).sub(pos), 0xffffff, 2.5, 0.35); floatText(pos, 'CLASH', 0xffffff); sfx('clash'); }
+  else if (type === 't') sfx('throw', side === 1 ? 1 : 0.4);
+  else if (type === 'k') sfx('catch', side === 1 ? 1 : 0.3);
+}
+function showBanner(t) {
+  if (t < 0 || state.mode !== 'playing') { ui.banner.hidden = true; return; }
+  ui.banner.hidden = false;
+  setText(ui.bannerBig, 'bb', String(Math.max(1, Math.ceil(t))));
+  setText(ui.bannerSmall, 'bs', document.pointerLockElement ? 'Get ready' : 'Click the arena to capture your mouse');
+}
+function separateLocal() {
+  const dx = player.pos.x - cpu.pos.x, dz = player.pos.z - cpu.pos.z, d = Math.hypot(dx, dz);
+  if (d < PLAYER_R * 2 && d > 1e-4 && Math.abs(player.pos.y - cpu.pos.y) < PLAYER_H) {
+    const push = PLAYER_R * 2 - d;
+    player.pos.x += dx / d * push; player.pos.z += dz / d * push;
+  }
+}
+function netStep(dt) {
+  const input = state.mode === 'playing';
+  const age = net.oppAt ? clamp((Date.now() - net.oppAt) / 1000, 0, 0.2) : 0;
+  if (net.role === 'host') {
+    if (net.phase === 'count') { net.countT -= dt; if (net.countT <= 0) { net.countT = 0; net.phase = 'play'; } }
+    const live = net.phase === 'play';
+    if (live && input) playerInput(dt); else player.wish.set(0, 0, 0);
+    physics(player, dt);
+    remoteFighter(cpu, net.opp && net.opp.f, age, dt);
+    cpu.invuln = Math.max(0, cpu.invuln - dt);
+    if (live) {
+      hostActions();
+      updateDisc(player.disc, dt);
+      updateDisc(cpu.disc, dt);
+      discClash(dt);
+      state.time -= dt;
+      if (state.time <= 0) { state.time = 0; net.phase = 'over'; net.lastSend = 0; endRound(); }
+    } else { discVisual(player.disc, dt); discVisual(cpu.disc, dt); }
+    showBanner(net.phase === 'count' ? net.countT : -1);
+  } else {
+    const h = net.opp;
+    const live = !!h && h.ph === 'play';
+    if (live && input) playerInput(dt); else player.wish.set(0, 0, 0);
+    physics(player, dt);
+    remoteFighter(cpu, h && h.f, age, dt);
+    if (h) applyHostState(h, age, dt);
+    showBanner(h && h.ph === 'count' ? num(h.ct) : -1);
+  }
+  separateLocal();
+}
+
+// ---------- Loop ----------
+function step(dt, attract) {
+  if (attract) aiUpdate(player, cpu, DIFF.normal, dt); else playerInput(dt);
+  aiUpdate(cpu, player, attract ? DIFF.normal : DIFF[state.diff], dt);
+  physics(player, dt);
+  physics(cpu, dt);
+  separate();
+  updateDisc(player.disc, dt);
+  updateDisc(cpu.disc, dt);
+  discClash(dt);
+}
+let last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.033, Math.max(0, (now - last) / 1000));
+  last = now;
+  if (net.match && state.mode !== 'lobby') {
+    netStep(dt);
+  } else if (state.mode === 'playing') {
+    step(dt, false);
+    state.time -= dt;
+    if (state.time <= 0) endRound();
+  } else if (state.mode === 'menu' || state.mode === 'results' || state.mode === 'lobby') {
+    step(dt, true);
+  }
+  if (net.match) netSend(now);
+  updateCamera(dt);
+  updatePreview();
+  updateRings(state.mode === 'paused' ? 0 : dt);
+  updateFloats(state.mode === 'paused' ? 0 : dt);
+  updateHUD(dt);
+  if (composer) composer.render(); else renderer.render(scene, camera);
+}
+show('menu');
+requestAnimationFrame(frame);
+})();
+</script>
