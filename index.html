@@ -1031,6 +1031,7 @@ function hit(d, victim) {
 // Everything a landed hit does, for discs and split shards alike.
 function applyHit(victim, credit, dmg, label, dirVel, knock, big) {
   credit.dmg += dmg; credit.hits++; credit.best = Math.max(credit.best, dmg);
+  hub.hitSeq++; hub.lastHit = [r2(victim.pos.x), r2(victim.pos.y + 1.15), r2(victim.pos.z), credit === player ? 0 : 1];
   tmp.set(dirVel.x, 0, dirVel.z).normalize();
   victim.vel.x += tmp.x * knock; victim.vel.z += tmp.z * knock;
   victim.vel.y = Math.max(victim.vel.y, knock * 0.5); victim.onGround = false;
@@ -2174,6 +2175,7 @@ function netSend(now) {
         sh: shards.slice(0, 4).map(sh => [r2(sh.pos.x), r2(sh.pos.y), r2(sh.pos.z), r2(sh.vel.x), r2(sh.vel.y), r2(sh.vel.z), sh.owner === player ? 0 : 1]) }
     : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
   p.ts = r3(now / 1000);
+  if (net.role === 'host' && hub.mySlot) p.sl = hub.mySlot;
   p.n = playerName();
   net.match.presence(p).catch(() => {});
 }
@@ -2538,13 +2540,14 @@ function makeExhibit(slot, cols) {
   ring.visible = false;
   g.add(ring);
   const canvas = document.createElement('canvas');
-  canvas.width = 512; canvas.height = 160;
+  canvas.width = 512; canvas.height = 200;
   const tex = new THREE.CanvasTexture(canvas);
   const board = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-  board.scale.set(9, 2.8, 1);
+  board.scale.set(9, 3.5, 1);
   board.position.y = CEIL + 2.6;
   g.add(board);
-  const m = { group: g, cols, views, ring, ringT: 1, board: { canvas, tex, key: '' }, buf: [], t: 0, acc: 0, tick: 0, hitSeq: 0, hit: [0, 0, 0, 0], hitSeen: 0 };
+  const m = { group: g, cols, views, ring, ringT: 1, board: { canvas, tex, key: '' }, buf: [], t: 0, acc: 0, tick: 0, hitSeq: 0, hit: [0, 0, 0, 0], hitSeen: 0,
+    slotKey: slot.join(','), net: false };
   exhibitReset(m);
   m.clock = rand(30, ROUND);
   return m;
@@ -2736,7 +2739,7 @@ function exDraw(m, dt) {
   exBoard(m, a);
 }
 function exBoard(m, a) {
-  const key = a.sc[0] + ':' + a.sc[1] + ':' + Math.ceil(a.clock);
+  const key = a.sc[0] + ':' + a.sc[1] + ':' + Math.ceil(a.clock) + ':' + (a.lb || '') + ':' + (a.n ? a.n.join('|') : '');
   if (key === m.board.key) return;
   m.board.key = key;
   const c = m.board.canvas, g = c.getContext('2d'), hex = n => '#' + n.toString(16).padStart(6, '0');
@@ -2745,19 +2748,153 @@ function exBoard(m, a) {
   g.font = '600 26px system-ui, sans-serif';
   g.fillStyle = 'rgba(160, 220, 255, 0.85)';
   const t = Math.ceil(a.clock);
-  g.fillText(t > 0 ? 'EXHIBITION · ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') : 'EXHIBITION · FINAL', 256, 34);
+  const label = m.net ? (a.lb || 'LIVE') : 'EXHIBITION';
+  g.fillText(t > 0 ? label + ' · ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') : label + ' · FINAL', 256, 34);
   g.font = '700 84px system-ui, sans-serif';
   g.fillStyle = hex(m.cols[0]); g.textAlign = 'right'; g.fillText(String(a.sc[0]), 226, 128);
   g.fillStyle = 'rgba(200, 230, 255, 0.7)'; g.textAlign = 'center'; g.fillText('–', 256, 124);
   g.fillStyle = hex(m.cols[1]); g.textAlign = 'left'; g.fillText(String(a.sc[1]), 286, 128);
+  if (a.n) {
+    // Real players' names under their scores (already cleaned when the digest arrived).
+    g.font = '600 24px system-ui, sans-serif';
+    g.fillStyle = hex(m.cols[0]); g.textAlign = 'right'; g.fillText(a.n[0], 226, 176);
+    g.fillStyle = hex(m.cols[1]); g.textAlign = 'left'; g.fillText(a.n[1], 286, 176);
+  }
   m.board.tex.needsUpdate = true;
 }
 if (STADIUM) EXHIBIT_SLOTS.forEach((s, i) => exhibits.push(makeExhibit(s, EXHIBIT_COLS[i % EXHIBIT_COLS.length])));
 function stadiumUpdate(dt) {
+  hubTick();
+  const taken = new Set();
+  for (const v of hub.views) if (v.live) taken.add(v.m.slotKey);
   for (const m of exhibits) {
-    m.group.visible = settings.stadium;
-    if (settings.stadium) { exSim(m, dt); exDraw(m, dt); }
+    const showEx = settings.stadium && !taken.has(m.slotKey);
+    m.group.visible = showEx;
+    if (showEx) { exSim(m, dt); exDraw(m, dt); }
   }
+  for (const v of hub.views) {
+    v.m.group.visible = settings.stadium && v.live;
+    if (v.m.group.visible) { v.m.t = performance.now() / 1000; v.m.acc = 0; exDraw(v.m, dt); }
+  }
+}
+
+// ---------- Stadium hub: real matches in the neighboring cubes ----------
+// Phase 1 of docs/stadium-design.md, on the public site only (the claude.ai sandbox can't reach the hub).
+// The host of each match (or the player in a CPU game) gets a cube from the hub and sends a ~10 Hz digest;
+// every page draws the matches around its own cube. If the hub is down, the CPU exhibitions stay.
+const HUB_DEFAULT = '';
+const hub = { url: null, ws: null, open: false, mySlot: null, sent: '', lastDigest: 0, retry: 0, retryAt: 0,
+  cpuMatch: 'cpu-' + Math.random().toString(36).slice(2, 10), hitSeq: 0, lastHit: [0, 0, 0, 0], views: [] };
+{
+  const q = new URLSearchParams(location.search).get('hub');
+  if (q && /^wss?:\/\/[^\s]+$/.test(q)) hub.url = q;
+  else if (HUB_DEFAULT && location.protocol === 'https:' && !(window.claude && window.claude.use)) hub.url = HUB_DEFAULT;
+}
+const okSlot = s => Array.isArray(s) && s.length === 3 && s.every(v => Number.isInteger(v) && Math.abs(v) <= 3);
+function hubConnect() {
+  if (!hub.url || hub.ws || performance.now() < hub.retryAt) return;
+  let ws;
+  try { ws = new WebSocket(hub.url); } catch (e) { hub.retryAt = performance.now() + 30000; return; }
+  hub.ws = ws;
+  ws.onopen = () => { hub.open = true; hub.retry = 0; hub.sent = ''; };
+  ws.onmessage = ev => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.t === 'slot') hub.mySlot = okSlot(msg.slot) ? msg.slot : null;
+    else if (msg.t === 'f' && Array.isArray(msg.m)) for (const e of msg.m.slice(0, 40)) hubReceive(e);
+  };
+  ws.onclose = () => {
+    hub.ws = null; hub.open = false; hub.mySlot = null;
+    for (const v of hub.views) v.live = false;
+    // Reconnect with backoff: 2 s, 4 s, ... up to 30 s.
+    hub.retry = Math.min(hub.retry + 1, 5);
+    hub.retryAt = performance.now() + Math.min(30000, 1000 * Math.pow(2, hub.retry));
+  };
+}
+// What this page should be telling the hub right now.
+function hubWanted() {
+  const inRound = state.mode === 'playing' || state.mode === 'paused';
+  if (net.match && net.role === 'host' && (net.phase === 'count' || net.phase === 'play')) return { t: 'hello', role: 'host', match: 'm-' + net.code.toLowerCase() };
+  if (net.match && net.role === 'guest') {
+    const sl = net.opp && okSlot(net.opp.sl) ? net.opp.sl : null;
+    return { t: 'hello', role: 'viewer', slot: sl || [0, 0, 0] };
+  }
+  if (!net.match && inRound) return { t: 'hello', role: 'host', match: hub.cpuMatch };
+  // Menu, lobby or results: watch from the cube you last played in (the centre if none).
+  return { t: 'hello', role: 'viewer', slot: hub.mySlot || [0, 0, 0] };
+}
+function hubTick() {
+  if (!hub.url) return;
+  if (!hub.ws) { hubConnect(); return; }
+  if (!hub.open) return;
+  const want = hubWanted(), key = JSON.stringify(want);
+  if (key !== hub.sent) {
+    if (want.role !== 'host') hub.mySlot = want.slot && (want.slot[0] || want.slot[1] || want.slot[2]) ? want.slot : hub.mySlot;
+    hub.sent = key;
+    try { hub.ws.send(key); } catch (e) { /* reconnects on close */ }
+  }
+  const now = performance.now();
+  if (want.role === 'host' && hub.mySlot && now - hub.lastDigest >= 100) {
+    hub.lastDigest = now;
+    try { hub.ws.send(JSON.stringify({ t: 'd', s: hubDigest() })); } catch (e) { /* reconnects on close */ }
+  }
+  // A cube we haven't heard about for a while has gone quiet.
+  for (const v of hub.views) if (v.live && now - v.seen > 3500) v.live = false;
+}
+// The same digest shape the CPU exhibitions use, so one renderer draws both.
+function hubDigest() {
+  const pf = f => [r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r3(f.yaw), r2(f.vel.x), r2(f.vel.z),
+    r2(chargeFrac(f)), r2(f.blockT), r2(f.throwAnim), r2(f.flash), r2(f.invuln), f.disc.state === 'held' ? 1 : 0];
+  const pd = d => [DISC_STATES.indexOf(d.state), r2(d.pos.x), r2(d.pos.y), r2(d.pos.z), r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)];
+  const online = !!net.match;
+  return {
+    t: 0, clock: r2(Math.max(0, state.time)), sc: [player.dmg, cpu.dmg], hs: hub.hitSeq, hit: hub.lastHit,
+    f: [pf(player), pf(cpu)], d: [pd(player.disc), pd(cpu.disc)],
+    n: [playerName(), online ? (net.oppName || 'Rival') : 'CPU'],
+    lb: online ? 'LIVE · ONLINE' : 'LIVE · ' + state.diff.toUpperCase() + ' CPU',
+  };
+}
+// One match's digest from the hub, at stadium slot [x, y, z]. Everything in it came from another player: clean it.
+function hubReceive(e) {
+  if (!Array.isArray(e) || e.length < 4 || !e[3] || typeof e[3] !== 'object') return;
+  const slot = [e[0], e[1], e[2]];
+  if (!okSlot(slot)) return;
+  const origin = hub.mySlot || [0, 0, 0];
+  const rel = [slot[0] - origin[0], slot[1] - origin[1], slot[2] - origin[2]];
+  if (!rel[0] && !rel[1] && !rel[2]) return;
+  if (Math.abs(rel[0]) > 2 || Math.abs(rel[1]) > 1 || Math.abs(rel[2]) > 2) return;
+  const s = e[3];
+  const arr = (a, n) => Array.isArray(a) && a.length >= n;
+  if (!arr(s.f, 2) || !arr(s.d, 2) || !arr(s.f[0], 12) || !arr(s.f[1], 12) || !arr(s.d[0], 7) || !arr(s.d[1], 7)) return;
+  const clean = {
+    t: performance.now() / 1000, clock: clamp(num(s.clock), 0, 600), sc: [Math.round(num((s.sc || [])[0])), Math.round(num((s.sc || [])[1]))],
+    hs: num(s.hs), hit: arr(s.hit, 4) ? s.hit.slice(0, 4).map(num) : [0, 0, 0, 0],
+    f: [s.f[0].slice(0, 12).map(num), s.f[1].slice(0, 12).map(num)],
+    d: [s.d[0].slice(0, 7).map(num), s.d[1].slice(0, 7).map(num)],
+    n: arr(s.n, 2) ? [cleanName(s.n[0]) || 'Player', cleanName(s.n[1]) || 'Player'] : null,
+    lb: typeof s.lb === 'string' ? s.lb.replace(/[^A-Z0-9 ·-]/g, '').slice(0, 24) : 'LIVE',
+  };
+  for (const v of clean.f) { v[0] = clamp(v[0], -HALF_X, HALF_X); v[1] = clamp(v[1], 0, CEIL); v[2] = clamp(v[2], -HALF_Z, HALF_Z); }
+  for (const v of clean.d) { v[0] = clamp(Math.round(v[0]), 0, 2); for (const j of [1, 2, 3]) v[j] = clamp(v[j], BMIN.getComponent(j - 1), BMAX.getComponent(j - 1)); }
+  const key = rel.join(',');
+  let v = hub.views.find(x => x.m.slotKey === key && x.matchSlot === slot.join(','));
+  if (!v) {
+    // Reuse a free view (moving its cube) before building a new one; at most 12 at once.
+    v = hub.views.find(x => !x.live);
+    if (!v) {
+      if (hub.views.length >= 12) return;
+      v = { m: makeExhibit(rel, [COL_YOU, COL_CPU]) };
+      v.m.net = true;
+      hub.views.push(v);
+    }
+    v.m.slotKey = key;
+    v.m.group.position.set(rel[0] * GAP_X, rel[1] * GAP_Y, rel[2] * GAP_Z);
+    v.m.buf = []; v.m.hitSeen = clean.hs; v.m.board.key = '';
+    v.matchSlot = slot.join(',');
+  }
+  v.live = true; v.seen = performance.now();
+  v.m.buf.push(clean);
+  if (v.m.buf.length > 6) v.m.buf.shift();
 }
 
 // ---------- Loop ----------

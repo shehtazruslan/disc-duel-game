@@ -1,0 +1,16 @@
+name = "disc-duel-stadium"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[[durable_objects.bindings]]
+name = "STADIUM"
+class_name = "StadiumHub"
+
+# SQLite-backed Durable Objects are the kind available on the Workers Free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["StadiumHub"]
+
+[vars]
+# Pages allowed to connect: the GitHub Pages site, plus local testing.
+ALLOWED_ORIGINS = "https://shehtazruslan.github.io,http://localhost:8768,http://127.0.0.1:8768"
