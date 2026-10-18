@@ -9,6 +9,8 @@ A 1v1 disc-throwing duel in a compact neon arena. Discs ricochet off every wall,
 - **vs CPU** with Easy, Normal and Hard difficulty.
 - **Online 1v1.** One player clicks *Create match* and sends the 4-character code; the other clicks *Join*. Browsers connect directly with WebRTC via [PeerJS](https://peerjs.com/). Some strict networks (work, school, mobile) block direct connections.
 
+The glass walls look out on a stadium of other arenas. A few of them run CPU exhibition matches; add `?stadium=0` to the URL to turn those off. See [docs/stadium-design.md](docs/stadium-design.md) for the plan to show real online matches there.
+
 ## Controls
 
 | Input | Action |

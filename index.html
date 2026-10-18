@@ -410,9 +410,9 @@ const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeomet
 edges.position.y = CEIL / 2;
 scene.add(edges);
 // Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass.
-// Decoration for now; they could later host other live matches.
+// A few of them run exhibition matches (see "Stadium" below); the rest are empty for now.
+const GAP_X = ARENA + 10, GAP_Y = CEIL + 8;
 {
-  const GAP_X = ARENA + 10, GAP_Y = CEIL + 8;
   const ring = new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA, CEIL, ARENA)).attributes.position.array;
   const pts = [], spots = [];
   for (let ix = -2; ix <= 2; ix++) for (let iy = -1; iy <= 1; iy++) for (let iz = -2; iz <= 2; iz++) {
@@ -1863,6 +1863,281 @@ function netStep(dt) {
   separateLocal();
 }
 
+// ---------- Stadium: exhibition matches in the neighboring cubes ----------
+// Phase 0 of docs/stadium-design.md. Each live neighbor runs its own small CPU-vs-CPU simulation, packs a
+// 10 Hz digest the way a real match will, and is drawn only from those digests (fighters interpolated,
+// discs extrapolated with their bounces), so real online matches can later take the place of these sims.
+// It never touches the main match: its own fighters, discs, scores and effects. `?stadium=0` turns it off.
+const STADIUM = !/[?&]stadium=0\b/.test(location.search);
+const EXHIBIT_SLOTS = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0], [1, 1, -1]];
+const EXHIBIT_COLS = [[0x7dff6a, 0xff4fd8], [0xffe14a, 0x6a8cff], [0xff5a5a, 0x4dffc3]];
+const SIM_DT = 1 / 30, DIGEST_EVERY = 3, VIEW_DELAY = 0.2, EX_TRAIL = 16;
+const exhibits = [];
+
+function simFighter(z, yaw) {
+  return {
+    pos: new V3(0, 0, z), vel: new V3(), wish: new V3(), dashDir: new V3(), yaw, onGround: true,
+    strafe: Math.random() < 0.5 ? 1 : -1, strafeT: rand(1, 2.5), prefDist: rand(8, 12), throwT: rand(0.8, 2.5), jumpT: rand(2, 6),
+    charging: false, chargeT: 0, chargeGoal: 0, throwAnim: 0, blockT: 0, blockCd: 0, dashT: 0, dashCd: 0, flash: 0, invuln: 0, handled: '',
+    dmg: 0, disc: { state: 0, pos: new V3(), vel: new V3(), bounces: 0, life: 0, returnT: 0, target: 1, credit: 0, reflected: false, launch: 0 },
+  };
+}
+function exhibitReset(m) {
+  m.f = [simFighter(7, 0), simFighter(-7, Math.PI)];
+  m.f[0].disc.target = 1; m.f[1].disc.target = 0; m.f[1].disc.credit = 1;
+  m.clock = ROUND;
+}
+function makeExhibit(slot, cols) {
+  const g = new THREE.Group();
+  g.position.set(slot[0] * GAP_X, slot[1] * GAP_Y, slot[2] * GAP_X);
+  scene.add(g);
+  const live = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA - 0.06, CEIL - 0.06, ARENA - 0.06)),
+    new THREE.LineBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: 0.75 }));
+  live.position.y = CEIL / 2;
+  g.add(live);
+  const views = cols.map(color => {
+    const mesh = makeFighterMesh(color);
+    g.add(mesh.group, mesh.foot, mesh.blob);
+    const disc = makeDiscMesh(color);
+    disc.visible = false;
+    const pos = new Float32Array(EX_TRAIL * 3), c = new THREE.Color(color), colors = new Float32Array(EX_TRAIL * 3);
+    for (let i = 0; i < EX_TRAIL; i++) { const k = Math.pow(1 - i / (EX_TRAIL - 1), 1.6); colors[i * 3] = c.r * k; colors[i * 3 + 1] = c.g * k; colors[i * 3 + 2] = c.b * k; }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    trail.frustumCulled = false; trail.visible = false;
+    g.add(disc, trail);
+    // The fields fighterVisual reads, filled from digests each frame.
+    return {
+      color, mesh, pos: new V3(), vel: new V3(), yaw: 0, walk: 0, onGround: true, charging: false, chargeT: 0, throwAnim: 0,
+      slideT: 0, blockT: 0, flash: 0, invuln: 0, disc: { state: 'held', mesh: disc, trail, pos: new V3(), wasHeld: true, spin: 0 },
+    };
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.78, 40), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  ring.visible = false;
+  g.add(ring);
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 160;
+  const tex = new THREE.CanvasTexture(canvas);
+  const board = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  board.scale.set(9, 2.8, 1);
+  board.position.y = CEIL + 2.6;
+  g.add(board);
+  const m = { group: g, cols, views, ring, ringT: 1, board: { canvas, tex, key: '' }, buf: [], t: 0, acc: 0, tick: 0, hitSeq: 0, hit: [0, 0, 0, 0], hitSeen: 0 };
+  exhibitReset(m);
+  m.clock = rand(30, ROUND);
+  return m;
+}
+
+const exChest = (f, out) => out.set(f.pos.x, f.pos.y + 1.15, f.pos.z);
+function exThrow(m, f, o) {
+  const d = f.disc, k = Math.min(1, f.chargeT / CHARGE_T);
+  const speed = DISC_SPEED + (CHARGE_SPEED - DISC_SPEED) * (1 - (1 - k) * (1 - k));
+  const hand = tmp.set(f.pos.x - Math.sin(f.yaw) * 0.75, f.pos.y + 1.35, f.pos.z - Math.cos(f.yaw) * 0.75);
+  clampBounds(hand);
+  const tgt = exChest(o, tmp2);
+  const lead = hand.distanceTo(tgt) / speed;
+  tgt.x += o.vel.x * lead * 0.7; tgt.z += o.vel.z * lead * 0.7;
+  clampBounds(tgt);
+  // A bank shot: aim at the target's mirror image in one wall (or the ceiling).
+  if (Math.random() < 0.35) {
+    const a = AXES[Math.floor(Math.random() * 3)], hi = a === 'y' || Math.random() < 0.5;
+    tgt[a] = 2 * (hi ? BMAX : BMIN)[a] - tgt[a];
+  }
+  d.vel.subVectors(tgt, hand).normalize();
+  d.vel.x += gauss() * 0.045; d.vel.y += gauss() * 0.03; d.vel.z += gauss() * 0.045;
+  d.vel.normalize().multiplyScalar(speed);
+  d.pos.copy(hand);
+  d.state = 1; d.bounces = 0; d.life = 0; d.reflected = false; d.launch++;
+  d.target = m.f.indexOf(o); d.credit = m.f.indexOf(f);
+  f.charging = false; f.chargeT = 0; f.throwAnim = THROW_ANIM; f.throwT = rand(1.0, 2.0);
+}
+function exFighter(m, f, o, dt, live) {
+  const dx = o.pos.x - f.pos.x, dz = o.pos.z - f.pos.z, dist = Math.hypot(dx, dz) || 1;
+  f.yaw = approachAngle(f.yaw, f.blockT > 0 ? f.yaw : Math.atan2(-dx, -dz), 8 * dt);
+  f.wish.set(0, 0, 0);
+  if (live) {
+    f.strafeT -= dt;
+    if (f.strafeT <= 0) { f.strafe *= -1; f.strafeT = rand(0.7, 2.4); f.prefDist = rand(7, 13); }
+    const tx = dx / dist, tz = dz / dist, radial = clamp((dist - f.prefDist) / 4, -1, 1), lim = HALF - 3;
+    let wx = -tz * f.strafe * 0.85 + tx * radial, wz = tx * f.strafe * 0.85 + tz * radial;
+    wx += Math.max(0, -lim - f.pos.x) - Math.max(0, f.pos.x - lim);
+    wz += Math.max(0, -lim - f.pos.z) - Math.max(0, f.pos.z - lim);
+    const wl = Math.hypot(wx, wz);
+    if (wl > 0.15) f.wish.set(wx / wl * MOVE * 0.85, 0, wz / wl * MOVE * 0.85);
+    // Dodge or shield the other disc when it is about to arrive.
+    const d = o.disc;
+    if (d.state === 1 && d.target === m.f.indexOf(f)) {
+      const r = exChest(f, tmp).sub(d.pos), vv = d.vel.lengthSq(), t = r.dot(d.vel) / vv, id = d.launch + ':' + d.bounces;
+      if (t > 0 && t < 0.36 && f.handled !== id && tmp2.copy(r).addScaledVector(d.vel, -t).length() < 2.2) {
+        f.handled = id;
+        if (f.disc.state === 0 && f.blockCd <= 0 && Math.random() < 0.3) {
+          f.yaw = Math.atan2(-(d.pos.x - f.pos.x), -(d.pos.z - f.pos.z));
+          f.charging = false; f.blockT = BLOCK_T; f.blockCd = BLOCK_CD;
+        } else if (Math.random() < 0.6) {
+          if (f.dashCd <= 0) { f.dashDir.set(-d.vel.z, 0, d.vel.x).normalize().multiplyScalar(Math.random() < 0.5 ? 1 : -1); f.dashT = DASH_T; f.dashCd = DASH_CD; }
+          else if (f.onGround) { f.vel.y = JUMP_V; f.onGround = false; }
+        }
+      }
+    }
+    f.throwT -= dt;
+    if (f.charging) { f.chargeT += dt; if (f.disc.state !== 0 || f.blockT > 0) f.charging = false; else if (f.chargeT >= f.chargeGoal) exThrow(m, f, o); }
+    else if (f.disc.state === 0 && f.throwT <= 0 && o.invuln < 0.2 && f.blockT <= 0) { f.charging = true; f.chargeT = 0; f.chargeGoal = Math.random() * 0.6; }
+    f.jumpT -= dt;
+    if (f.jumpT <= 0) { f.jumpT = rand(2, 6); if (f.onGround) { f.vel.y = JUMP_V; f.onGround = false; } }
+  } else f.charging = false;
+  if (f.dashT > 0) { f.dashT -= dt; f.vel.x = f.dashDir.x * DASH_V; f.vel.z = f.dashDir.z * DASH_V; }
+  else {
+    const k = Math.min(1, (f.onGround ? 12 : 3) * dt), slow = f.charging ? CHARGE_MOVE : 1;
+    f.vel.x += (f.wish.x * slow - f.vel.x) * k; f.vel.z += (f.wish.z * slow - f.vel.z) * k;
+  }
+  f.vel.y -= GRAV * dt;
+  f.pos.addScaledVector(f.vel, dt);
+  if (f.pos.y <= 0) { f.pos.y = 0; f.vel.y = Math.max(0, f.vel.y); f.onGround = true; } else f.onGround = false;
+  const lim = HALF - PLAYER_R;
+  f.pos.x = clamp(f.pos.x, -lim, lim); f.pos.z = clamp(f.pos.z, -lim, lim);
+  f.throwAnim = Math.max(0, f.throwAnim - dt);
+  f.dashCd = Math.max(0, f.dashCd - dt);
+  f.blockT = Math.max(0, f.blockT - dt); f.blockCd = Math.max(0, f.blockCd - dt);
+  f.invuln = Math.max(0, f.invuln - dt); f.flash = Math.max(0, f.flash - dt * 3.5);
+}
+function exDisc(m, owner, dt) {
+  const f = m.f[owner], d = f.disc;
+  if (d.state === 0) return;
+  d.life += dt;
+  const steps = Math.max(1, Math.ceil(d.vel.length() * dt / 0.25)), h = dt / steps;
+  for (let i = 0; i < steps && d.state; i++) {
+    if (d.state === 2) {
+      d.returnT += h;
+      const r = exChest(f, tmp).sub(d.pos), dist = r.length();
+      if (dist < 1.5 || d.returnT > 3.5) { d.state = 0; break; }
+      d.vel.lerp(r.multiplyScalar(RETURN_SPEED / dist), 1 - Math.exp(-7 * h));
+    }
+    d.pos.addScaledVector(d.vel, h);
+    for (const a of AXES) {
+      const lo = d.pos[a] < BMIN[a], hi = d.pos[a] > BMAX[a];
+      if (!lo && !hi) continue;
+      d.pos[a] = 2 * (hi ? BMAX : BMIN)[a] - d.pos[a];
+      d.vel[a] = hi ? -Math.abs(d.vel[a]) : Math.abs(d.vel[a]);
+      if (d.state === 1 && ++d.bounces >= MAX_BOUNCES) { d.state = 2; d.returnT = 0; }
+    }
+    const vi = d.state === 1 ? d.target : 1 - owner, v = m.f[vi];
+    if (v.invuln > 0) continue;
+    const y = clamp(d.pos.y, v.pos.y + 0.35, v.pos.y + 1.8), dist = Math.hypot(d.pos.x - v.pos.x, d.pos.y - y, d.pos.z - v.pos.z);
+    if (d.state === 1 && v.blockT > 0 && dist < 1.8) {
+      // Shielded: the disc flies back at whoever threw it.
+      const sp = Math.min(d.vel.length() * 1.12, 50);
+      d.vel.copy(exChest(m.f[d.credit], tmp).sub(d.pos)).normalize().multiplyScalar(sp);
+      d.target = d.credit; d.credit = vi; d.bounces = 0; d.life = 0; d.reflected = true; d.launch++;
+      v.blockT = Math.min(v.blockT, 0.12);
+    } else if (dist < PLAYER_R + DISC_R) {
+      const credit = d.state === 2 ? owner : d.credit;
+      m.f[credit].dmg += d.state === 2 ? 10 : 12 + d.bounces * 8 + (d.reflected ? 10 : 0) + Math.round(Math.max(0, d.vel.length() - DISC_SPEED) * 0.6);
+      tmp.set(d.vel.x, 0, d.vel.z).normalize();
+      v.vel.x += tmp.x * 13; v.vel.z += tmp.z * 13; v.vel.y = Math.max(v.vel.y, 6.5); v.onGround = false;
+      v.invuln = INVULN; v.flash = 1; v.charging = false;
+      m.hitSeq++; m.hit = [r2(v.pos.x), r2(v.pos.y + 1.15), r2(v.pos.z), credit];
+      d.state = 2; d.returnT = 0;
+    }
+  }
+  if (d.state === 1 && d.life > 4.5) { d.state = 2; d.returnT = 0; }
+}
+function exPack(m) {
+  const pf = f => [r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r3(f.yaw), r2(f.vel.x), r2(f.vel.z),
+    r2(f.charging ? Math.min(1, f.chargeT / CHARGE_T) : 0), r2(f.blockT), r2(f.throwAnim), r2(f.flash), r2(f.invuln), f.disc.state === 0 ? 1 : 0];
+  const pd = d => [d.state, r2(d.pos.x), r2(d.pos.y), r2(d.pos.z), r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)];
+  return { t: m.t, clock: Math.max(0, m.clock), sc: [m.f[0].dmg, m.f[1].dmg], hs: m.hitSeq, hit: m.hit, f: m.f.map(pf), d: m.f.map(f => pd(f.disc)) };
+}
+function exSim(m, dt) {
+  m.acc += dt;
+  while (m.acc >= SIM_DT) {
+    m.acc -= SIM_DT; m.t += SIM_DT;
+    m.clock -= SIM_DT;
+    // After the clock runs out the fighters stand down for a few seconds, then a new round starts.
+    if (m.clock < -6) exhibitReset(m);
+    const live = m.clock > 0;
+    exFighter(m, m.f[0], m.f[1], SIM_DT, live);
+    exFighter(m, m.f[1], m.f[0], SIM_DT, live);
+    exDisc(m, 0, SIM_DT); exDisc(m, 1, SIM_DT);
+    if (++m.tick % DIGEST_EVERY === 0) { m.buf.push(exPack(m)); if (m.buf.length > 5) m.buf.shift(); }
+  }
+}
+// Fold a straight-line position back into the cube, as the bounces would.
+function foldAxis(v, lo, hi) {
+  const L = 2 * (hi - lo), u = (((v - lo) % L) + L) % L;
+  return u <= L / 2 ? lo + u : lo + L - u;
+}
+function exDraw(m, dt) {
+  const buf = m.buf;
+  if (buf.length < 2) return;
+  const vt = m.t + m.acc - VIEW_DELAY;
+  let i = buf.length - 2;
+  while (i > 0 && buf[i].t > vt) i--;
+  const a = buf[i], b = buf[i + 1], k = clamp((vt - a.t) / (b.t - a.t), 0, 1.5);
+  for (let s = 0; s < 2; s++) {
+    const v = m.views[s], fa = a.f[s], fb = b.f[s];
+    v.pos.set(fa[0] + (fb[0] - fa[0]) * k, fa[1] + (fb[1] - fa[1]) * k, fa[2] + (fb[2] - fa[2]) * k);
+    v.yaw = fa[3] + ((((fb[3] - fa[3] + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - Math.PI) * Math.min(1, k);
+    v.vel.set(fb[4], 0, fb[5]);
+    v.charging = fb[6] > 0; v.chargeT = fb[6] * CHARGE_T; v.blockT = fb[7]; v.throwAnim = fb[8];
+    v.flash = Math.max(fa[9], fb[9]); v.invuln = fb[10]; v.onGround = v.pos.y < 0.05;
+    const dv = v.disc, da = a.d[s], db = b.d[s];
+    // Held at either end of the step: show it in hand (on the back) instead of guessing a catch.
+    v.disc.state = fb[11] || !da[0] ? 'held' : 'flying';
+    fighterVisual(v, dt);
+    if (!da[0] || !db[0]) { dv.mesh.visible = dv.trail.visible = false; dv.wasHeld = true; continue; }
+    if (da[0] === 1 && db[0] === 1) {
+      const e = vt - a.t;
+      for (let j = 0; j < 3; j++) dv.pos.setComponent(j, foldAxis(da[1 + j] + da[4 + j] * e, BMIN.getComponent(j), BMAX.getComponent(j)));
+    } else dv.pos.set(da[1] + (db[1] - da[1]) * k, da[2] + (db[2] - da[2]) * k, da[3] + (db[3] - da[3]) * k);
+    dv.mesh.visible = dv.trail.visible = true;
+    dv.spin += dt;
+    dv.mesh.position.copy(dv.pos);
+    dv.mesh.rotation.y += dt * 22;
+    dv.mesh.rotation.z = Math.sin(dv.spin * 3) * 0.25;
+    const arr = dv.trail.geometry.attributes.position.array;
+    if (dv.wasHeld) for (let j = 0; j < EX_TRAIL; j++) { arr[j * 3] = dv.pos.x; arr[j * 3 + 1] = dv.pos.y; arr[j * 3 + 2] = dv.pos.z; }
+    else { arr.copyWithin(3, 0, (EX_TRAIL - 1) * 3); arr[0] = dv.pos.x; arr[1] = dv.pos.y; arr[2] = dv.pos.z; }
+    dv.trail.geometry.attributes.position.needsUpdate = true;
+    dv.wasHeld = false;
+  }
+  // A ring where each hit lands.
+  if (a.hs > m.hitSeen) {
+    m.hitSeen = a.hs;
+    if (!reducedMotion) { m.ring.position.set(a.hit[0], a.hit[1], a.hit[2]); m.ring.material.color.setHex(m.cols[a.hit[3]]); m.ringT = 0; }
+  }
+  m.ringT += dt;
+  m.ring.visible = m.ringT < 0.45;
+  if (m.ring.visible) {
+    m.ring.lookAt(camera.position);
+    m.ring.scale.setScalar(1 + m.ringT * 6);
+    m.ring.material.opacity = 1 - m.ringT / 0.45;
+  }
+  exBoard(m, a);
+}
+function exBoard(m, a) {
+  const key = a.sc[0] + ':' + a.sc[1] + ':' + Math.ceil(a.clock);
+  if (key === m.board.key) return;
+  m.board.key = key;
+  const c = m.board.canvas, g = c.getContext('2d'), hex = n => '#' + n.toString(16).padStart(6, '0');
+  g.clearRect(0, 0, c.width, c.height);
+  g.textAlign = 'center';
+  g.font = '600 26px system-ui, sans-serif';
+  g.fillStyle = 'rgba(160, 220, 255, 0.85)';
+  const t = Math.ceil(a.clock);
+  g.fillText(t > 0 ? 'EXHIBITION · ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') : 'EXHIBITION · FINAL', 256, 34);
+  g.font = '700 84px system-ui, sans-serif';
+  g.fillStyle = hex(m.cols[0]); g.textAlign = 'right'; g.fillText(String(a.sc[0]), 226, 128);
+  g.fillStyle = 'rgba(200, 230, 255, 0.7)'; g.textAlign = 'center'; g.fillText('–', 256, 124);
+  g.fillStyle = hex(m.cols[1]); g.textAlign = 'left'; g.fillText(String(a.sc[1]), 286, 128);
+  m.board.tex.needsUpdate = true;
+}
+if (STADIUM) EXHIBIT_SLOTS.forEach((s, i) => exhibits.push(makeExhibit(s, EXHIBIT_COLS[i % EXHIBIT_COLS.length])));
+function stadiumUpdate(dt) {
+  for (const m of exhibits) { exSim(m, dt); exDraw(m, dt); }
+}
+
 // ---------- Loop ----------
 function step(dt, attract) {
   if (attract) aiUpdate(player, cpu, DIFF.normal, dt); else playerInput(dt);
@@ -1896,6 +2171,7 @@ function frame(now) {
   updatePreview();
   updateRings(state.mode === 'paused' ? 0 : dt);
   updateFloats(state.mode === 'paused' ? 0 : dt);
+  stadiumUpdate(dt);
   updateHUD(dt);
   if (composer) composer.render(); else renderer.render(scene, camera);
 }
