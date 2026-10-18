@@ -174,6 +174,26 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 }
 #bannerBig { font-family: var(--font-display); font-size: 72px; line-height: 1; color: var(--ink); text-shadow: 0 0 24px var(--you); }
 #bannerSmall { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+.hint { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.6; }
+.overlay.scroll { align-items: flex-start; }
+.overlay.scroll .panel { margin-block: auto; }
+.panel.wide { width: min(560px, 100%); }
+.set-group { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+.set-group h3 { margin: 0; font-family: var(--font-display); font-size: 15px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+.slider { display: grid; grid-template-columns: 14ch 1fr 6ch; align-items: center; gap: 10px; font-size: 12px; color: var(--dim); }
+.slider input[type="range"] { min-width: 0; accent-color: var(--you); }
+.slider output { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.slider select { grid-column: 2 / 4; min-width: 0; font: 600 12px var(--font-mono); color: var(--ink); background: var(--void); border: 1px solid var(--line); padding: 6px; }
+.check { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink); cursor: pointer; }
+.check input { accent-color: var(--you); width: 16px; height: 16px; }
+.binds { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: center; font-size: 12px; }
+.binds span { color: var(--dim); }
+.binds button {
+  min-width: 12ch; font: 600 12px var(--font-mono); letter-spacing: 0.08em; color: var(--you); background: transparent;
+  border: 1px solid var(--line); padding: 6px 10px; cursor: pointer;
+}
+.binds button.wait { color: var(--void); background: var(--you); border-color: var(--you); }
+.controls.fixed dt { white-space: normal; }
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13px; font-variant-numeric: tabular-nums; }
 .stats .h { font-size: 10px; letter-spacing: 0.2em; color: var(--dim); }
 .stats .y { color: var(--you); text-align: right; }
@@ -230,27 +250,8 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <p class="net-msg" id="netMsg"></p>
     </div>
     <p class="net-msg" id="offlineNote">Online matches need a signed-in claude.ai account with access to this page, or the game opened from its own website.</p>
-    <dl class="controls">
-      <dt>Mouse</dt><dd>Aim (click locks the cursor). The crosshair turns orange on your opponent</dd>
-      <dt>Hold left click</dt><dd>Wind up, release to throw. Longer holds throw faster. Click while it flies to recall it</dd>
-      <dt>Right click / Q</dt><dd>Shield: reflects a disc back at its thrower. Disc must be in hand</dd>
-      <dt>W A S D</dt><dd>Move</dd>
-      <dt>Space</dt><dd>Jump · in the air next to a wall, wall jump</dd>
-      <dt>Shift</dt><dd>Dash · once more in the air, holding your height</dd>
-      <dt>C</dt><dd>Slide under high discs</dd>
-      <dt>V</dt><dd>Switch between first person and over-the-shoulder view</dd>
-      <dt>Esc · M</dt><dd>Pause · Mute</dd>
-    </dl>
-    <fieldset class="sens">
-      <legend>Mouse sensitivity</legend>
-      <div class="sens-row">
-        <select id="sensUnit" aria-label="Sensitivity unit"><option value="mult">Multiplier</option><option value="cm">cm/360°</option></select>
-        <input type="range" id="sensRange" aria-label="Sensitivity">
-        <input type="number" id="sensNum" aria-label="Sensitivity value">
-      </div>
-      <label class="dpi" for="sensDpi">Mouse DPI <input type="number" id="sensDpi" min="100" max="32000" step="50"></label>
-      <p class="sens-note">cm/360° is how far your mouse travels for a full turn. Use your mouse's real DPI. Exact in Chrome and Edge, which give the game raw mouse input.</p>
-    </fieldset>
+    <p class="hint">WASD to move · hold left click to wind up and throw · right click to shield. Every control is listed in Settings.</p>
+    <button type="button" class="ghost" id="settingsBtn">Settings &amp; controls</button>
     <p class="scoring"><b>Direct</b> 12 · <b>each bank</b> +8 · <b>reflect</b> +10 · <b>recall hit</b> 10 · <b>full wind-up</b> up to +10. The dotted line previews your first two bounces.</p>
     <p class="touch-note">This game needs a keyboard and mouse.</p>
   </div>
@@ -272,18 +273,60 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
   <div class="panel">
     <p class="eyebrow" id="pauseEyebrow">Match paused</p>
     <h2 id="pauseTitle">Paused</h2>
-    <fieldset class="sens">
-      <legend>Mouse sensitivity</legend>
-      <div class="sens-row">
-        <select id="sensUnitP" aria-label="Sensitivity unit"><option value="mult">Multiplier</option><option value="cm">cm/360°</option></select>
-        <input type="range" id="sensRangeP" aria-label="Sensitivity">
-        <input type="number" id="sensNumP" aria-label="Sensitivity value">
-      </div>
-      <label class="dpi" for="sensDpiP">Mouse DPI <input type="number" id="sensDpiP" min="100" max="32000" step="50"></label>
-    </fieldset>
     <div class="btns">
       <button type="button" class="go" id="resumeBtn">Resume</button>
+      <button type="button" class="ghost" id="pauseSettingsBtn">Settings &amp; controls</button>
       <button type="button" class="ghost" id="quitBtn">Quit to menu</button>
+    </div>
+  </div>
+</section>
+
+<section class="overlay center scroll" id="settings" hidden>
+  <div class="panel wide">
+    <p class="eyebrow">Disc Duel</p>
+    <h2>Settings</h2>
+    <div class="set-group">
+      <h3>Mouse</h3>
+      <fieldset class="sens">
+        <legend>Mouse sensitivity</legend>
+        <div class="sens-row">
+          <select id="sensUnit" aria-label="Sensitivity unit"><option value="mult">Multiplier</option><option value="cm">cm/360°</option></select>
+          <input type="range" id="sensRange" aria-label="Sensitivity">
+          <input type="number" id="sensNum" aria-label="Sensitivity value">
+        </div>
+        <label class="dpi" for="sensDpi">Mouse DPI <input type="number" id="sensDpi" min="100" max="32000" step="50"></label>
+        <p class="sens-note">cm/360° is how far your mouse travels for a full turn. Use your mouse's real DPI. Exact in Chrome and Edge, which give the game raw mouse input.</p>
+      </fieldset>
+    </div>
+    <div class="set-group">
+      <h3>View and sound</h3>
+      <label class="slider" for="setFov">Field of view <input type="range" id="setFov" min="70" max="120" step="1"><output id="setFovOut" for="setFov"></output></label>
+      <p class="sens-note">Horizontal, in first person. 103° is the default.</p>
+      <label class="slider" for="setVol">Effects volume <input type="range" id="setVol" min="0" max="100" step="1"><output id="setVolOut" for="setVol"></output></label>
+      <p class="sens-note">Sounds come from where they happen. Headphones make it easiest to hear which wall a disc bounced off.</p>
+    </div>
+    <div class="set-group">
+      <h3>Graphics</h3>
+      <label class="check" for="setBloom"><input type="checkbox" id="setBloom"> Neon glow</label>
+      <label class="check" for="setStadium"><input type="checkbox" id="setStadium"> Matches in the neighboring arenas</label>
+      <label class="slider" for="setQuality">Resolution <select id="setQuality"><option value="high">Sharp</option><option value="low">Fast</option></select></label>
+      <p class="sens-note">Turning off the glow and the neighboring matches, or choosing Fast, helps on slower computers.</p>
+    </div>
+    <div class="set-group">
+      <h3>Controls</h3>
+      <p class="sens-note">Click a key to change it, then press the new key. Esc cancels.</p>
+      <div class="binds" id="binds"></div>
+      <dl class="controls fixed">
+        <dt>Mouse</dt><dd>Aim. The crosshair turns orange on your opponent</dd>
+        <dt>Hold left click</dt><dd>Wind up, release to throw. Click while the disc flies to recall it</dd>
+        <dt>Right click</dt><dd>Shield, same as the Shield key. Disc must be in hand</dd>
+        <dt>Jump in the air at a wall</dt><dd>Wall jump</dd>
+        <dt>Esc</dt><dd>Pause</dd>
+      </dl>
+      <button type="button" class="ghost" id="resetBinds">Reset controls to defaults</button>
+    </div>
+    <div class="btns">
+      <button type="button" class="go" id="settingsDone">Done</button>
     </div>
   </div>
 </section>
@@ -346,11 +389,29 @@ const net = {
   myPeer: null, oppPeer: null, opp: null, oppAt: 0,
   lastSend: 0, fx: [], fxSeq: 0, fxSeen: 0, gh: { n: 0, x: 0, z: 0 }, ghSeen: 0,
   act: { t: 0, r: 0, dir: [0, 0, -1] }, actSeen: { t: 0, r: 0 }, throwAt: 0, unsub: null,
+  snaps: [], off: null, predUntil: 0,
 };
+
+// ---------- Settings (saved in this browser) ----------
+const DEFAULT_BINDS = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', dash: 'ShiftLeft', slide: 'KeyC', shield: 'KeyQ', view: 'KeyV', mute: 'KeyM' };
+const BIND_LABELS = [['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['dash', 'Dash'], ['slide', 'Slide'], ['shield', 'Shield'], ['view', 'Switch view'], ['mute', 'Mute']];
+const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', binds: Object.assign({}, DEFAULT_BINDS) };
+try {
+  const saved = JSON.parse(localStorage.getItem('discduel.settings') || 'null');
+  if (saved && typeof saved === 'object') {
+    if (+saved.fov >= 70 && +saved.fov <= 120) settings.fov = +saved.fov;
+    if (+saved.sfx >= 0 && +saved.sfx <= 1) settings.sfx = +saved.sfx;
+    if (typeof saved.bloom === 'boolean') settings.bloom = saved.bloom;
+    if (typeof saved.stadium === 'boolean') settings.stadium = saved.stadium;
+    if (saved.quality === 'low' || saved.quality === 'high') settings.quality = saved.quality;
+    if (saved.binds && typeof saved.binds === 'object') for (const k in DEFAULT_BINDS) if (typeof saved.binds[k] === 'string' && saved.binds[k]) settings.binds[k] = saved.binds[k];
+  }
+} catch (e) { /* storage unavailable: defaults */ }
+function saveSettings() { try { localStorage.setItem('discduel.settings', JSON.stringify(settings)); } catch (e) { /* storage unavailable */ } }
 
 // ---------- Renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+renderer.setPixelRatio(settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
 renderer.setSize(innerWidth, innerHeight);
 document.getElementById('stage').appendChild(renderer.domElement);
 
@@ -614,40 +675,103 @@ function updateFloats(dt) {
 }
 
 // ---------- Audio ----------
-let ac = null, muted = false;
+// Every sound is placed in 3D (HRTF panning + distance falloff) and heard from the camera, so with
+// headphones you can tell where a bounce or a disc is without looking. All of it runs through `master`.
+let ac = null, muted = false, master = null;
 function audio() {
-  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; } }
+  if (!ac) {
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      master = ac.createGain();
+      master.connect(ac.destination);
+      applyVolume();
+    } catch (e) { ac = null; }
+  }
   if (ac && ac.state === 'suspended') ac.resume();
   return ac;
 }
-function tone(f0, f1, dur, type, vol) {
-  const a = ac; if (!a || muted) return;
+function applyVolume() { if (master) master.gain.value = muted ? 0 : settings.sfx; }
+function setAudioPos(node, pos) {
+  if (node.positionX) { node.positionX.value = pos.x; node.positionY.value = pos.y; node.positionZ.value = pos.z; }
+  else node.setPosition(pos.x, pos.y, pos.z);
+}
+// Where a sound plays: a panner at `pos`, or straight to the ears when pos is null (the player's own UI sounds).
+function voice(pos) {
+  if (!pos) return master;
+  const p = ac.createPanner();
+  p.panningModel = 'HRTF'; p.distanceModel = 'inverse';
+  p.refDistance = 2.5; p.rolloffFactor = 1.3; p.maxDistance = 120;
+  setAudioPos(p, pos);
+  p.connect(master);
+  return p;
+}
+function tone(f0, f1, dur, type, vol, out) {
+  const a = ac;
   const o = a.createOscillator(), g = a.createGain(), t = a.currentTime;
   o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+  o.connect(g).connect(out); o.start(t); o.stop(t + dur + 0.02);
 }
-function noise(dur, vol, freq) {
-  const a = ac; if (!a || muted) return;
+function noise(dur, vol, freq, out) {
+  const a = ac;
   const len = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, len, a.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
   const s = a.createBufferSource(), flt = a.createBiquadFilter(), g = a.createGain();
   s.buffer = buf; flt.type = 'bandpass'; flt.frequency.value = freq; flt.Q.value = 0.8; g.gain.value = vol;
-  s.connect(flt).connect(g).connect(a.destination); s.start();
+  s.connect(flt).connect(g).connect(out); s.start();
 }
-function sfx(kind, near = 1) {
-  if (state.mode !== 'playing') return;
-  const v = 0.35 + 0.65 * near;
+function sfx(kind, pos) {
+  if (state.mode !== 'playing' || !ac || muted) return;
+  const out = voice(pos || null);
   switch (kind) {
-    case 'throw': noise(0.22, 0.35 * v, 1800); tone(300, 900, 0.15, 'sawtooth', 0.04 * v); break;
-    case 'bounce': tone(1300, 700, 0.12, 'triangle', 0.09 * v); break;
-    case 'hit': tone(180, 50, 0.35, 'sawtooth', 0.18); noise(0.25, 0.5, 600); break;
-    case 'block': tone(1900, 1200, 0.18, 'square', 0.06); noise(0.12, 0.3, 4000); break;
-    case 'catch': tone(500, 1000, 0.1, 'sine', 0.1 * v); break;
-    case 'dash': noise(0.18, 0.25, 900); break;
-    case 'clash': tone(2400, 900, 0.25, 'square', 0.07); noise(0.2, 0.4, 3000); break;
-    case 'slide': noise(0.4, 0.22 * v, 500); break;
-    case 'walljump': tone(240, 520, 0.12, 'triangle', 0.08 * v); noise(0.1, 0.25 * v, 1200); break;
+    case 'throw': noise(0.22, 0.35, 1800, out); tone(300, 900, 0.15, 'sawtooth', 0.05, out); break;
+    // The bounce is the cue to listen for: a bright two-part metallic ping with a sharp click.
+    case 'bounce': tone(1500, 780, 0.18, 'triangle', 0.2, out); tone(2950, 1500, 0.1, 'sine', 0.07, out); noise(0.05, 0.3, 5200, out); break;
+    case 'hit': tone(180, 50, 0.35, 'sawtooth', 0.2, out); noise(0.25, 0.55, 600, out); break;
+    case 'block': tone(1900, 1200, 0.18, 'square', 0.07, out); noise(0.12, 0.35, 4000, out); break;
+    case 'catch': tone(500, 1000, 0.1, 'sine', 0.12, out); break;
+    case 'dash': noise(0.18, 0.3, 900, out); break;
+    case 'clash': tone(2400, 900, 0.25, 'square', 0.08, out); noise(0.2, 0.45, 3000, out); break;
+    case 'slide': noise(0.4, 0.28, 500, out); break;
+    case 'walljump': tone(240, 520, 0.12, 'triangle', 0.1, out); noise(0.1, 0.3, 1200, out); break;
+  }
+}
+// The listener rides on the camera.
+const earFwd = new V3(), earUp = new V3();
+function updateListener() {
+  if (!ac) return;
+  const L = ac.listener, p = camera.position;
+  camera.getWorldDirection(earFwd);
+  earUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+  if (L.positionX) {
+    L.positionX.value = p.x; L.positionY.value = p.y; L.positionZ.value = p.z;
+    L.forwardX.value = earFwd.x; L.forwardY.value = earFwd.y; L.forwardZ.value = earFwd.z;
+    L.upX.value = earUp.x; L.upY.value = earUp.y; L.upZ.value = earUp.z;
+  } else {
+    L.setPosition(p.x, p.y, p.z);
+    L.setOrientation(earFwd.x, earFwd.y, earFwd.z, earUp.x, earUp.y, earUp.z);
+  }
+}
+// A quiet hum follows each disc in flight, pitched by its speed, so you can hear one coming.
+function updateHums() {
+  for (const d of [player.disc, cpu.disc]) {
+    const want = !!ac && !muted && state.mode === 'playing' && d.state !== 'held';
+    if (want && !d.hum) {
+      const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(), p = voice(d.pos);
+      o.type = 'sawtooth'; f.type = 'lowpass'; f.Q.value = 4;
+      g.gain.setValueAtTime(0.0001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.05, ac.currentTime + 0.06);
+      o.connect(f).connect(g).connect(p); o.start();
+      d.hum = { o, f, g, p };
+    } else if (!want && d.hum) {
+      const h = d.hum; d.hum = null;
+      try { h.g.gain.setTargetAtTime(0.0001, ac.currentTime, 0.03); h.o.stop(ac.currentTime + 0.2); } catch (e) {}
+    }
+    if (d.hum) {
+      const sp = d.vel.length();
+      setAudioPos(d.hum.p, d.pos);
+      d.hum.o.frequency.setTargetAtTime(60 + sp * 3, ac.currentTime, 0.05);
+      d.hum.f.frequency.setTargetAtTime(500 + sp * 18, ac.currentTime, 0.05);
+    }
   }
 }
 // A rising tone while the local player winds up a throw.
@@ -662,7 +786,7 @@ function chargeSound(on) {
   o.type = 'triangle';
   o.frequency.setValueAtTime(200, t); o.frequency.exponentialRampToValueAtTime(760, t + CHARGE_T);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.045, t + 0.08);
-  o.connect(g).connect(ac.destination); o.start(t);
+  o.connect(g).connect(master); o.start(t);
   chargeOsc = { o, g };
 }
 
@@ -747,7 +871,7 @@ function tryJump(f) {
   f.wallJumpCd = WALLJUMP_CD; f.airDash = false; f.dashT = 0;
   tmp.set(nx ? -nx * (HALF - 0.03) : f.pos.x, f.pos.y + 1, nz ? -nz * (HALF - 0.03) : f.pos.z);
   spawnRing(tmp, tmp2.set(nx, 0, nz), f.color, 1.6, 0.4);
-  sfx('walljump', f === player ? 1 : 0.3);
+  sfx('walljump', f.pos);
 }
 function tryDash(f, dir) {
   if (f.dashCd > 0) return;
@@ -756,14 +880,14 @@ function tryDash(f, dir) {
   const d = dir || (f.wish.lengthSq() > 0.01 ? f.wish : forwardOf(f, tmp));
   f.dashDir.set(d.x, 0, d.z).normalize();
   f.dashT = DASH_T; f.dashCd = DASH_CD; f.slideT = 0;
-  sfx('dash', f === player ? 1 : 0.3);
+  sfx('dash', f.pos);
 }
 function trySlide(f, dir) {
   if (!f.onGround || f.slideCd > 0 || f.dashT > 0) return;
   const d = dir || (f.wish.lengthSq() > 0.01 ? f.wish : forwardOf(f, tmp));
   f.slideDir.set(d.x, 0, d.z).normalize();
   f.slideT = SLIDE_T; f.slideCd = SLIDE_CD;
-  sfx('slide', f === player ? 1 : 0.3);
+  sfx('slide', f.pos);
 }
 function tryBlock(f) {
   if (f.blockCd > 0 || f.disc.state !== 'held') return;
@@ -787,15 +911,16 @@ function throwDisc(f, dir, speed = DISC_SPEED) {
   f.charging = false; f.chargeT = 0; f.throwAnim = THROW_ANIM;
   const arr = d.trail.geometry.attributes.position.array;
   for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
-  netFx('t', null, null, f);
-  sfx('throw', f === player ? 1 : 0.4);
+  netFx('t', d.pos, null, f);
+  sfx('throw', d.pos);
 }
 function startReturn(d) { d.state = 'returning'; d.returnT = 0; d.reflected = false; }
 function catchDisc(d) {
   d.state = 'held';
   if (d.owner.ai) d.owner.ai.throwT = Math.max(d.owner.ai.throwT, 0.35);
-  netFx('k', null, null, d.owner);
-  sfx('catch', d.owner === player ? 1 : 0.3);
+  const catchAt = chestOf(d.owner, new V3());
+  netFx('k', catchAt, null, d.owner);
+  sfx('catch', catchAt);
 }
 function deflect(d, blocker) {
   const attacker = d.credit;
@@ -809,7 +934,7 @@ function deflect(d, blocker) {
   blocker.blockT = Math.min(blocker.blockT, 0.12);
   spawnRing(d.pos, tmp2, blocker.color, 2.2, 0.35);
   netFx('r', d.pos, tmp2, blocker);
-  sfx('block');
+  sfx('block', d.pos);
 }
 function hit(d, victim) {
   const returning = d.state === 'returning';
@@ -837,21 +962,20 @@ function hit(d, victim) {
   netFx('h', tmp2, null, credit, label + ' +' + dmg);
   spawnRing(chestOf(victim, tmp2), tmp.copy(camera.position).sub(tmp2), credit.color, 2.5, 0.4);
   if (victim === player) { state.shake = 0.55; state.hurt = 1; }
-  sfx('hit');
+  sfx('hit', tmp2);
   startReturn(d);
 }
 function onBounce(d, axis, side) {
   tmp.copy(d.pos);
   tmp[axis] = axis === 'y' ? (side > 0 ? CEIL - 0.03 : 0.03) : side * (HALF - 0.03);
   tmp2.set(0, 0, 0); tmp2[axis] = -side;
-  spawnRing(tmp, tmp2, d.color, 1, 0.55);
+  spawnRing(tmp, tmp2, d.color, 1.4, 0.6);
   netFx('b', tmp, tmp2, d.owner);
   if (d.state === 'flying') {
     d.bounces++;
     if (d.bounces >= MAX_BOUNCES) startReturn(d);
   }
-  const near = 1 - clamp(d.pos.distanceTo(camera.position) / 30, 0, 0.85);
-  sfx('bounce', near);
+  sfx('bounce', tmp);
 }
 
 function updateDisc(d, dt) {
@@ -911,7 +1035,7 @@ function discClash(dt) {
   spawnRing(tmp2.addVectors(a.pos, b.pos).multiplyScalar(0.5), tmp3.copy(camera.position).sub(tmp2), 0xffffff, 2.5, 0.35);
   floatText(tmp2, 'CLASH', 0xffffff);
   netFx('c', tmp2, null, null);
-  sfx('clash');
+  sfx('clash', tmp2);
 }
 
 // ---------- Fighter physics ----------
@@ -1109,7 +1233,8 @@ function radPerCount() {
 if (!(sensCfg.cm > 0)) sensCfg.cm = cmFromRad(BASE_RAD * sensCfg.mult, sensCfg.dpi);
 function playerInput(dt) {
   const f = forwardOf(player, tmp), r = rightOf(player, tmp2);
-  const fw = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0), st = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  const b = settings.binds;
+  const fw = (keys[b.forward] ? 1 : 0) - (keys[b.back] ? 1 : 0), st = (keys[b.right] ? 1 : 0) - (keys[b.left] ? 1 : 0);
   player.wish.set(0, 0, 0).addScaledVector(f, fw).addScaledVector(r, st);
   if (player.wish.lengthSq() > 0) player.wish.normalize().multiplyScalar(MOVE);
   player.yaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * 2.4 * dt;
@@ -1153,6 +1278,15 @@ function playerRelease() {
     net.act.t++; net.act.dir = [r2(dir.x), r2(dir.y), r2(dir.z), r2(speed)];
     net.throwAt = performance.now(); net.lastSend = 0;
     player.throwAnim = THROW_ANIM;
+    // Show the throw now; the host's copy takes over when it arrives (usually within a few frames).
+    const d = player.disc;
+    handPos(player, d.pos);
+    d.vel.copy(dir).multiplyScalar(speed);
+    d.state = 'flying'; d.life = 0;
+    const arr = d.trail.geometry.attributes.position.array;
+    for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+    net.predUntil = performance.now() + 700;
+    sfx('throw', d.pos);
   } else throwDisc(player, dir, speed);
 }
 
@@ -1271,7 +1405,8 @@ function updateCamera(dt) {
     }
     camera.lookAt(tmp.copy(cam.pos).add(cam.dir));
     // Hit kick: a quick FOV punch that settles back.
-    const fov = (firstPerson ? 78 : 72) + (reducedMotion ? 0 : state.kick * 6);
+    const vfov = firstPerson ? 2 * Math.atan(Math.tan(settings.fov * Math.PI / 360) / camera.aspect) * 180 / Math.PI : 72;
+    const fov = vfov + (reducedMotion ? 0 : state.kick * 6);
     if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
   } else {
     if (camera.fov !== 72) { camera.fov = 72; camera.updateProjectionMatrix(); }
@@ -1302,7 +1437,7 @@ resetFighter(cpu, -7, Math.PI);
 
 const $ = id => document.getElementById(id);
 const ui = {
-  hud: $('hud'), menu: $('menu'), pause: $('pause'), results: $('results'), lobby: $('lobby'),
+  hud: $('hud'), menu: $('menu'), pause: $('pause'), results: $('results'), lobby: $('lobby'), settings: $('settings'),
   banner: $('banner'), bannerBig: $('bannerBig'), bannerSmall: $('bannerSmall'),
   youDmg: $('youDmg'), cpuDmg: $('cpuDmg'), youHits: $('youHits'), cpuHits: $('cpuHits'),
   clock: $('clock'), diffLabel: $('diffLabel'), chip: $('discChip'), dash: $('dashBar'), shield: $('shieldBar'),
@@ -1313,6 +1448,7 @@ function show(name) {
   ui.pause.hidden = name !== 'paused';
   ui.results.hidden = name !== 'results';
   ui.lobby.hidden = name !== 'lobby';
+  ui.settings.hidden = true; rebinding = null;
   ui.hud.hidden = !(name === 'playing' || name === 'paused');
 }
 function lock() {
@@ -1394,22 +1530,39 @@ function updateHUD(dt) {
 }
 
 // ---------- Events ----------
+// Rebinding grabs the next key before the game sees it.
+let rebinding = null;
+addEventListener('keydown', e => {
+  if (!rebinding) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (e.code !== 'Escape') {
+    const b = settings.binds, old = b[rebinding];
+    // Taking a key another action uses swaps the two, so nothing is left unbound.
+    for (const k in b) if (k !== rebinding && b[k] === e.code) b[k] = old;
+    b[rebinding] = e.code;
+    saveSettings();
+  }
+  rebinding = null;
+  renderBinds();
+}, true);
 addEventListener('keydown', e => {
   keys[e.code] = true;
+  const b = settings.binds;
+  if (e.code === b.mute && !e.repeat) { muted = !muted; applyVolume(); }
+  if (!ui.settings.hidden) { if (e.code === 'Escape') closeSettings(); return; }
   if (state.mode !== 'playing') return;
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) || Object.values(b).includes(e.code)) e.preventDefault();
   if (e.repeat) return;
-  if (e.code === 'Space') tryJump(player);
-  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryDash(player);
-  if (e.code === 'KeyQ') tryBlock(player);
-  if (e.code === 'KeyC') trySlide(player);
-  if (e.code === 'KeyV') {
+  if (e.code === b.jump) tryJump(player);
+  if (e.code === b.dash) tryDash(player);
+  if (e.code === b.shield) tryBlock(player);
+  if (e.code === b.slide) trySlide(player);
+  if (e.code === b.view) {
     fpsView = !fpsView;
     try { localStorage.setItem('discduel.view', fpsView ? 'fps' : 'third'); } catch (err) { /* storage unavailable */ }
   }
-  if (e.code === 'Escape' || e.code === 'KeyP') pause();
+  if (e.code === 'Escape') pause();
 });
-addEventListener('keydown', e => { if (e.code === 'KeyM') muted = !muted; });
 addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (!net.match) pause(); });
 addEventListener('mousemove', e => {
@@ -1428,7 +1581,7 @@ addEventListener('mouseup', e => { if (e.button === 0 && state.mode === 'playing
 // The menu and pause screens each have a copy of the sensitivity controls (ids end in "P" on pause).
 function renderSens() {
   const r = SENS_RANGE[sensCfg.unit], v = sensCfg.unit === 'cm' ? sensCfg.cm : sensCfg.mult;
-  for (const sfx of ['', 'P']) {
+  for (const sfx of ['']) {
     $('sensUnit' + sfx).value = sensCfg.unit;
     for (const id of ['sensRange', 'sensNum']) {
       const el = $(id + sfx);
@@ -1448,7 +1601,7 @@ function setSensValue(v) {
   if (sensCfg.unit === 'cm') sensCfg.cm = v; else sensCfg.mult = v;
   renderSens();
 }
-for (const sfx of ['', 'P']) {
+for (const sfx of ['']) {
   $('sensRange' + sfx).addEventListener('input', e => setSensValue(e.target.value));
   $('sensNum' + sfx).addEventListener('change', e => setSensValue(e.target.value));
   $('sensUnit' + sfx).addEventListener('change', e => {
@@ -1466,6 +1619,69 @@ for (const sfx of ['', 'P']) {
   });
 }
 renderSens();
+// ---------- Settings screen ----------
+const KEY_NAMES = { Space: 'Space', ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift', ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl',
+  AltLeft: 'Left Alt', AltRight: 'Right Alt', Tab: 'Tab', CapsLock: 'Caps Lock', Enter: 'Enter', Backspace: 'Backspace',
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[',
+  BracketRight: ']', Backslash: 'Backslash', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/' };
+function keyName(code) {
+  if (KEY_NAMES[code]) return KEY_NAMES[code];
+  return code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ');
+}
+function renderBinds() {
+  const box = $('binds');
+  box.textContent = '';
+  for (const [k, label] of BIND_LABELS) {
+    const name = document.createElement('span');
+    name.textContent = label;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.id = 'bind-' + k;
+    btn.textContent = rebinding === k ? 'Press a key…' : keyName(settings.binds[k]);
+    btn.classList.toggle('wait', rebinding === k);
+    btn.setAttribute('aria-label', label + ': ' + keyName(settings.binds[k]) + '. Press to change.');
+    btn.addEventListener('click', () => { rebinding = k; renderBinds(); $('bind-' + k).focus(); });
+    box.append(name, btn);
+  }
+}
+function applyQuality() {
+  const pr = settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75);
+  renderer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight);
+  if (composer) { if (composer.setPixelRatio) composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+}
+function renderSettings() {
+  $('setFov').value = String(settings.fov); $('setFovOut').textContent = settings.fov + '°';
+  $('setVol').value = String(Math.round(settings.sfx * 100)); $('setVolOut').textContent = Math.round(settings.sfx * 100) + '%';
+  $('setBloom').checked = settings.bloom;
+  $('setStadium').checked = settings.stadium;
+  $('setStadium').disabled = !STADIUM;
+  $('setQuality').value = settings.quality;
+  renderSens(); renderBinds();
+}
+$('setFov').addEventListener('input', e => { settings.fov = clamp(Math.round(+e.target.value), 70, 120); $('setFovOut').textContent = settings.fov + '°'; saveSettings(); });
+$('setVol').addEventListener('input', e => {
+  settings.sfx = clamp(+e.target.value / 100, 0, 1); $('setVolOut').textContent = Math.round(settings.sfx * 100) + '%';
+  applyVolume(); saveSettings();
+});
+$('setBloom').addEventListener('change', e => { settings.bloom = e.target.checked; saveSettings(); });
+$('setStadium').addEventListener('change', e => { settings.stadium = e.target.checked; saveSettings(); });
+$('setQuality').addEventListener('change', e => { settings.quality = e.target.value === 'low' ? 'low' : 'high'; applyQuality(); saveSettings(); });
+$('resetBinds').addEventListener('click', () => { settings.binds = Object.assign({}, DEFAULT_BINDS); rebinding = null; saveSettings(); renderBinds(); });
+// Settings opens over the menu or the pause screen without changing the game's mode (an online match keeps running).
+function openSettings() {
+  renderSettings();
+  ui.menu.hidden = true; ui.pause.hidden = true;
+  ui.settings.hidden = false;
+  $('settingsDone').focus();
+}
+function closeSettings() {
+  rebinding = null;
+  ui.settings.hidden = true;
+  show(state.mode);
+}
+$('settingsBtn').addEventListener('click', openSettings);
+$('pauseSettingsBtn').addEventListener('click', openSettings);
+$('settingsDone').addEventListener('click', closeSettings);
 addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;
@@ -1617,6 +1833,7 @@ function netSend(now) {
         sc: [player.dmg, player.hits, player.throws, player.banks, player.reflects, cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects],
         gh: net.gh, fx: net.fx }
     : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
+  p.ts = r3(now / 1000);
   net.match.presence(p).catch(() => {});
 }
 
@@ -1653,6 +1870,7 @@ async function openMatch(code, role) {
   Object.assign(net, {
     match: m, role, code, phase: role === 'host' ? 'wait' : 'off', countT: 0, oppPeer: null, opp: null, oppAt: 0,
     fx: [], fxSeen: -1, ghSeen: -1, gh: { n: 0, x: 0, z: 0 }, act: { t: 0, r: 0, dir: [0, 0, -1] }, actSeen: { t: 0, r: 0 }, lastSend: 0,
+    snaps: [], off: null, predUntil: 0,
   });
   $('netMsg').textContent = '';
   $('lobbyCode').textContent = code;
@@ -1685,7 +1903,7 @@ function onMatchPeers(ch) {
     if (!g) g = others.find(p => p.presence.k === 'g');
     if (!g) return;
     const first = net.oppPeer !== g.peer;
-    net.oppPeer = g.peer; net.opp = g.presence; net.oppAt = g.updatedAt;
+    net.oppPeer = g.peer; net.opp = g.presence; net.oppAt = g.updatedAt; recordSnap(g.presence);
     if (first) hostStart();
   } else {
     if (others.some(p => p.presence.k === 'full')) { netEnd('Match ' + net.code + ' already has two players.'); return; }
@@ -1695,7 +1913,7 @@ function onMatchPeers(ch) {
       if (state.mode === 'lobby') $('lobbyMsg').textContent = 'Match ' + net.code + ' already has two players.';
       return;
     }
-    net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt;
+    net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt; recordSnap(h.presence);
     const ph = h.presence.ph;
     if ((ph === 'count' || ph === 'play') && (state.mode === 'lobby' || state.mode === 'results')) beginOnlineRound();
     else if (ph === 'over' && (state.mode === 'playing' || state.mode === 'paused')) { applyHostState(h.presence, 0, 0); endRound(); }
@@ -1733,16 +1951,56 @@ function hostActions() {
     if (cpu.disc.state === 'flying') startReturn(cpu.disc);
   }
 }
+// Smoothing the other player. Snapshots carry the sender's clock (`ts`); we track the offset to ours.
+const INTERP = 0.1;
+function recordSnap(p) {
+  if (!p || typeof p.ts !== 'number' || !Array.isArray(p.f)) return;
+  const sn = net.snaps;
+  if (sn.length && p.ts <= sn[sn.length - 1].t) return;
+  sn.push({ t: p.ts, f: p.f });
+  if (sn.length > 30) sn.shift();
+  // The smallest offset seen is the least-delayed packet; let it creep up slowly in case the clocks drift.
+  const off = performance.now() / 1000 - p.ts;
+  net.off = net.off === null ? off : Math.min(off, net.off + 0.0005);
+}
+// Guest view of the host: play back INTERP seconds behind, between two real snapshots (never a guess).
+function sampleSnaps(out, f) {
+  const sn = net.snaps;
+  if (sn.length < 2 || net.off === null) return false;
+  const rt = performance.now() / 1000 - net.off - INTERP;
+  let i = sn.length - 2;
+  while (i > 0 && sn[i].t > rt) i--;
+  const a = sn[i], b = sn[i + 1], A = a.f, B = b.f;
+  if (rt >= b.t) {
+    // Ran past the newest snapshot (a late packet): coast on its velocity for a moment.
+    const e = Math.min(rt - b.t, 0.15);
+    out.set(num(B[0]) + num(B[3]) * e, Math.max(0, num(B[1]) + num(B[4]) * e), num(B[2]) + num(B[5]) * e);
+    f.yaw = num(B[6]);
+  } else {
+    const k = clamp((rt - a.t) / (b.t - a.t), 0, 1);
+    out.set(num(A[0]) + (num(B[0]) - num(A[0])) * k, num(A[1]) + (num(B[1]) - num(A[1])) * k, num(A[2]) + (num(B[2]) - num(A[2])) * k);
+    const dy = ((num(B[6]) - num(A[6]) + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    f.yaw = num(A[6]) + dy * k;
+  }
+  return true;
+}
 function remoteFighter(f, pk, age, dt) {
   if (Array.isArray(pk) && pk.length >= 11) {
-    tmp.set(num(pk[0]) + num(pk[3]) * age, Math.max(0, num(pk[1]) + num(pk[4]) * age), num(pk[2]) + num(pk[5]) * age);
     const lim = HALF - PLAYER_R;
-    tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
-    const k = 1 - Math.exp(-20 * dt);
-    if (f.pos.distanceTo(tmp) > 4) f.pos.copy(tmp); else f.pos.lerp(tmp, k);
     f.vel.set(num(pk[3]), num(pk[4]), num(pk[5]));
-    const dy = ((num(pk[6]) - f.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
-    f.yaw += dy * k;
+    if (net.role === 'guest' && sampleSnaps(tmp, f)) {
+      tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
+      f.pos.copy(tmp);
+    } else {
+      // Host view of the guest: the host decides hits, so stay close to the newest position.
+      // Move on the reported velocity, then ease out the remaining error.
+      tmp.set(num(pk[0]) + num(pk[3]) * age, Math.max(0, num(pk[1]) + num(pk[4]) * age), num(pk[2]) + num(pk[5]) * age);
+      tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
+      if (f.pos.distanceTo(tmp) > 3) f.pos.copy(tmp);
+      else { f.pos.addScaledVector(f.vel, dt); f.pos.lerp(tmp, 1 - Math.exp(-10 * dt)); f.pos.y = Math.max(0, f.pos.y); }
+      const dy = ((num(pk[6]) - f.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      f.yaw += dy * (1 - Math.exp(-20 * dt));
+    }
     f.pitch = num(pk[7]);
     f.blockT = num(pk[8]);
     // Wind-up, slide (which also shrinks the hitbox) and throw swing, for the remote fighter's pose.
@@ -1754,8 +2012,22 @@ function remoteFighter(f, pk, age, dt) {
   if (net.role === 'guest' && Array.isArray(pk)) { f.invuln = num(pk[9]); f.flash = Math.max(f.flash, num(pk[10])); }
   fighterVisual(f, dt);
 }
+// The guest's own throw flies right away on their screen until the host's copy shows up.
+function predictDisc(d, dt) {
+  d.pos.addScaledVector(d.vel, dt);
+  for (const a of AXES) {
+    if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); }
+    else if (d.pos[a] < BMIN[a]) { d.pos[a] = 2 * BMIN[a] - d.pos[a]; d.vel[a] = Math.abs(d.vel[a]); }
+  }
+  d.life += dt;
+  discVisual(d, dt);
+}
 function remoteDisc(d, pk, age, dt) {
   const st = Array.isArray(pk) ? DISC_STATES[pk[0]] : null;
+  if (d === player.disc) {
+    if ((!st || st === 'held') && performance.now() < net.predUntil) { predictDisc(d, dt); return; }
+    if (st && st !== 'held') net.predUntil = 0;
+  }
   if (!st || st === 'held') { d.state = 'held'; discVisual(d, dt); return; }
   tmp.set(num(pk[1]) + num(pk[4]) * age, num(pk[2]) + num(pk[5]) * age, num(pk[3]) + num(pk[6]) * age);
   for (const a of AXES) {
@@ -1804,20 +2076,20 @@ function playFx(e) {
   const vec = a => (Array.isArray(a) ? new V3(num(a[0]), num(a[1]), num(a[2])) : null);
   const pos = vec(e[2]), nrm = vec(e[3]);
   const col = side === 1 ? player.color : side === 0 ? cpu.color : 0xffffff;
-  const near = pos ? 1 - clamp(pos.distanceTo(camera.position) / 30, 0, 0.85) : 1;
   const text = typeof e[5] === 'string' ? e[5].slice(0, 24) : '';
-  if (type === 'b' && pos && nrm) { spawnRing(pos, nrm, col, 1, 0.55); sfx('bounce', near); }
+  if (type === 'b' && pos && nrm) { spawnRing(pos, nrm, col, 1.4, 0.6); sfx('bounce', pos); }
   else if (type === 'h' && pos) {
     floatText(pos, text, col);
     const c = pos.clone(); c.y -= 1.2;
     spawnRing(c, tmp.copy(camera.position).sub(c), col, 2.5, 0.4);
     state.kick = 1;
-    sfx('hit');
+    sfx('hit', pos);
   }
-  else if (type === 'r' && pos && nrm) { spawnRing(pos, nrm, col, 2.2, 0.35); sfx('block'); }
-  else if (type === 'c' && pos) { spawnRing(pos, tmp.copy(camera.position).sub(pos), 0xffffff, 2.5, 0.35); floatText(pos, 'CLASH', 0xffffff); sfx('clash'); }
-  else if (type === 't') sfx('throw', side === 1 ? 1 : 0.4);
-  else if (type === 'k') sfx('catch', side === 1 ? 1 : 0.3);
+  else if (type === 'r' && pos && nrm) { spawnRing(pos, nrm, col, 2.2, 0.35); sfx('block', pos); }
+  else if (type === 'c' && pos) { spawnRing(pos, tmp.copy(camera.position).sub(pos), 0xffffff, 2.5, 0.35); floatText(pos, 'CLASH', 0xffffff); sfx('clash', pos); }
+  // Your own throw already played its sound when you let go (the guest predicts it); only the rival's plays here.
+  else if (type === 't') { if (side !== 1) sfx('throw', pos); }
+  else if (type === 'k') sfx('catch', pos);
 }
 function showBanner(t) {
   if (t < 0 || state.mode !== 'playing') { ui.banner.hidden = true; return; }
@@ -2135,7 +2407,10 @@ function exBoard(m, a) {
 }
 if (STADIUM) EXHIBIT_SLOTS.forEach((s, i) => exhibits.push(makeExhibit(s, EXHIBIT_COLS[i % EXHIBIT_COLS.length])));
 function stadiumUpdate(dt) {
-  for (const m of exhibits) { exSim(m, dt); exDraw(m, dt); }
+  for (const m of exhibits) {
+    m.group.visible = settings.stadium;
+    if (settings.stadium) { exSim(m, dt); exDraw(m, dt); }
+  }
 }
 
 // ---------- Loop ----------
@@ -2152,6 +2427,10 @@ function step(dt, attract) {
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
+  tick(now, true);
+}
+// One step of the game. `render` is false for the background ticks below.
+function tick(now, render) {
   const dt = Math.min(0.033, Math.max(0, (now - last) / 1000));
   last = now;
   if (net.match && state.mode !== 'lobby') {
@@ -2167,14 +2446,24 @@ function frame(now) {
     step(dt, true);
   }
   if (net.match) netSend(now);
+  if (!render) return;
   updateCamera(dt);
+  updateListener();
+  updateHums();
   updatePreview();
   updateRings(state.mode === 'paused' ? 0 : dt);
   updateFloats(state.mode === 'paused' ? 0 : dt);
   stadiumUpdate(dt);
   updateHUD(dt);
-  if (composer) composer.render(); else renderer.render(scene, camera);
+  if (composer && settings.bloom) composer.render(); else renderer.render(scene, camera);
 }
+// A hidden tab gets no animation frames, which would freeze an online match for both players.
+// A tiny worker keeps a 30 Hz beat going (worker timers aren't throttled like the page's), so the
+// match, its snapshots and the clock keep running while either player is tabbed out.
+try {
+  const beat = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33);'], { type: 'text/javascript' })));
+  beat.onmessage = () => { if (document.hidden && net.match) tick(performance.now(), false); };
+} catch (e) { /* workers unavailable: a hidden tab pauses the match until it's visible again */ }
 show('menu');
 requestAnimationFrame(frame);
 })();

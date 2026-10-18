@@ -13,6 +13,8 @@ The glass walls look out on a stadium of other arenas. A few of them run CPU exh
 
 ## Controls
 
+Default keys; every key can be changed in **Settings & controls**.
+
 | Input | Action |
 | --- | --- |
 | Mouse | Aim (click the arena to capture the cursor). The crosshair turns orange on your opponent |
@@ -21,12 +23,20 @@ The glass walls look out on a stadium of other arenas. A few of them run CPU exh
 | Right click / Q | Shield, reflects a disc back at its thrower (disc must be in hand) |
 | W A S D | Move |
 | Space | Jump; in the air next to a wall, wall jump |
-| Shift | Dash; once more in the air, holding your height |
+| Left Shift | Dash; once more in the air, holding your height |
 | C | Slide, ducking under high discs |
 | V | Switch between first person (default) and over-the-shoulder view |
-| Esc / M | Pause / Mute |
+| M / Esc | Mute / Pause |
 
-Mouse sensitivity is on the menu and pause screens, as a multiplier or in cm/360° (enter your mouse DPI). The game asks the browser for raw mouse input, so cm/360° is exact in Chrome and Edge.
+## Settings
+
+- **Mouse sensitivity** as a multiplier or in cm/360° (enter your mouse DPI). The game asks for raw mouse input, so cm/360° is exact in Chrome and Edge.
+- **Field of view** (horizontal, first person) and **effects volume**.
+- **Graphics:** neon glow on/off, matches in the neighboring arenas on/off, and a Fast resolution for slower computers.
+
+## Sound
+
+Sounds are positioned in 3D (HRTF), so with headphones you can hear which wall a disc bounced off and where a disc in flight is.
 
 ## Scoring
 
