@@ -77,9 +77,18 @@ body {
 #crosshair.lock { transform: translate(-50%, -50%) scale(1.15); }
 #crosshair.lock .ring { stroke: var(--cpu); stroke-width: 2.5; }
 #crosshair.lock i { background: var(--cpu); }
-.sens { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; font-size: 12px; color: var(--dim); }
-.sens input { min-width: 0; accent-color: var(--you); }
-.sens output { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 5ch; text-align: right; }
+.sens { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 8px; font-size: 12px; color: var(--dim); }
+.sens legend { padding: 0; margin-bottom: 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; }
+.sens-row { display: grid; grid-template-columns: auto 1fr 8ch; align-items: center; gap: 10px; }
+.sens select, .sens input[type="number"] {
+  min-width: 0; font: 600 12px var(--font-mono); color: var(--ink); background: var(--void);
+  border: 1px solid var(--line); padding: 6px 6px; font-variant-numeric: tabular-nums;
+}
+.sens input[type="range"] { min-width: 0; accent-color: var(--you); }
+.sens select:focus-visible, .sens input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.dpi { display: flex; align-items: center; gap: 10px; }
+.dpi input { width: 9ch; }
+.sens-note { margin: 0; font-size: 11px; line-height: 1.5; }
 .hud-bottom {
   position: absolute; left: 0; right: 0; bottom: 0;
   padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
@@ -229,9 +238,19 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <dt>Space</dt><dd>Jump · in the air next to a wall, wall jump</dd>
       <dt>Shift</dt><dd>Dash · once more in the air, holding your height</dd>
       <dt>C</dt><dd>Slide under high discs</dd>
+      <dt>V</dt><dd>Switch between first person and over-the-shoulder view</dd>
       <dt>Esc · M</dt><dd>Pause · Mute</dd>
     </dl>
-    <label class="sens" for="sens">Mouse sensitivity <input type="range" id="sens" min="0.3" max="2.5" step="0.05" value="1"><output id="sensOut" for="sens">1.00×</output></label>
+    <fieldset class="sens">
+      <legend>Mouse sensitivity</legend>
+      <div class="sens-row">
+        <select id="sensUnit" aria-label="Sensitivity unit"><option value="mult">Multiplier</option><option value="cm">cm/360°</option></select>
+        <input type="range" id="sensRange" aria-label="Sensitivity">
+        <input type="number" id="sensNum" aria-label="Sensitivity value">
+      </div>
+      <label class="dpi" for="sensDpi">Mouse DPI <input type="number" id="sensDpi" min="100" max="32000" step="50"></label>
+      <p class="sens-note">cm/360° is how far your mouse travels for a full turn. Use your mouse's real DPI. Exact in Chrome and Edge, which give the game raw mouse input.</p>
+    </fieldset>
     <p class="scoring"><b>Direct</b> 12 · <b>each bank</b> +8 · <b>reflect</b> +10 · <b>recall hit</b> 10 · <b>full wind-up</b> up to +10. The dotted line previews your first two bounces.</p>
     <p class="touch-note">This game needs a keyboard and mouse.</p>
   </div>
@@ -253,7 +272,15 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
   <div class="panel">
     <p class="eyebrow" id="pauseEyebrow">Match paused</p>
     <h2 id="pauseTitle">Paused</h2>
-    <label class="sens" for="sensPause">Mouse sensitivity <input type="range" id="sensPause" min="0.3" max="2.5" step="0.05" value="1"><output id="sensPauseOut" for="sensPause">1.00×</output></label>
+    <fieldset class="sens">
+      <legend>Mouse sensitivity</legend>
+      <div class="sens-row">
+        <select id="sensUnitP" aria-label="Sensitivity unit"><option value="mult">Multiplier</option><option value="cm">cm/360°</option></select>
+        <input type="range" id="sensRangeP" aria-label="Sensitivity">
+        <input type="number" id="sensNumP" aria-label="Sensitivity value">
+      </div>
+      <label class="dpi" for="sensDpiP">Mouse DPI <input type="number" id="sensDpiP" min="100" max="32000" step="50"></label>
+    </fieldset>
     <div class="btns">
       <button type="button" class="go" id="resumeBtn">Resume</button>
       <button type="button" class="ghost" id="quitBtn">Quit to menu</button>
@@ -1026,15 +1053,37 @@ function aiUpdate(f, opp, cfg, dt) {
 // ---------- Player input ----------
 const keys = {};
 const cam = { pos: new V3(), dir: new V3(), orbit: 0 };
-let sens = 1, aimLock = false;
-try { const s = parseFloat(localStorage.getItem('discduel.sens')); if (s >= 0.3 && s <= 2.5) sens = s; } catch (e) { /* storage unavailable */ }
+let aimLock = false;
+// Sensitivity lives as radians of turn per mouse count; the menu shows it as a multiplier or as cm/360°.
+// cm/360° = (2π / radPerCount) counts ÷ DPI × 2.54.
+const BASE_RAD = 0.0022, PITCH_MAX = 1.45;
+const SENS_RANGE = { mult: { min: 0.1, max: 3, step: 0.01 }, cm: { min: 5, max: 120, step: 0.5 } };
+const sensCfg = { unit: 'mult', mult: 1, cm: 0, dpi: 800 };
+try {
+  const saved = JSON.parse(localStorage.getItem('discduel.sens2') || 'null');
+  if (saved && typeof saved === 'object') {
+    if (saved.unit === 'cm' || saved.unit === 'mult') sensCfg.unit = saved.unit;
+    if (+saved.mult > 0) sensCfg.mult = +saved.mult;
+    if (+saved.cm > 0) sensCfg.cm = +saved.cm;
+    if (+saved.dpi >= 100) sensCfg.dpi = +saved.dpi;
+  } else {
+    const old = parseFloat(localStorage.getItem('discduel.sens'));
+    if (old > 0) sensCfg.mult = old;
+  }
+} catch (e) { /* storage unavailable */ }
+const cmFromRad = (rad, dpi) => (2 * Math.PI / rad) / dpi * 2.54;
+const radFromCm = (cm, dpi) => 2 * Math.PI / ((cm / 2.54) * dpi);
+function radPerCount() {
+  return sensCfg.unit === 'cm' ? radFromCm(sensCfg.cm, sensCfg.dpi) : BASE_RAD * sensCfg.mult;
+}
+if (!(sensCfg.cm > 0)) sensCfg.cm = cmFromRad(BASE_RAD * sensCfg.mult, sensCfg.dpi);
 function playerInput(dt) {
   const f = forwardOf(player, tmp), r = rightOf(player, tmp2);
   const fw = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0), st = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
   player.wish.set(0, 0, 0).addScaledVector(f, fw).addScaledVector(r, st);
   if (player.wish.lengthSq() > 0) player.wish.normalize().multiplyScalar(MOVE);
   player.yaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * 2.4 * dt;
-  player.pitch = clamp(player.pitch + ((keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)) * 1.6 * dt, -1.2, 1.3);
+  player.pitch = clamp(player.pitch + ((keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)) * 1.6 * dt, -PITCH_MAX, PITCH_MAX);
 }
 function playerAimDir(out) {
   const o = clampBounds(cam.pos.clone());
@@ -1045,7 +1094,8 @@ function playerAimDir(out) {
   aimLock = false;
   if (tc > 0 && tc < t) {
     const cl = cam.pos.clone().addScaledVector(cam.dir, tc);
-    if (cl.distanceTo(chest) < 1.3) { aim.copy(cl); aimLock = true; }
+    // Aim assist: snap to the chest when the crosshair is close; tighter in first person, where aim is exact.
+    if (cl.distanceTo(chest) < (fpsView ? 0.9 : 1.3)) { aim.copy(cl); aimLock = true; }
   }
   return out.subVectors(aim, handPos(player, tmp2)).normalize();
 }
@@ -1094,12 +1144,93 @@ function updatePreview() {
   preview.computeLineDistances();
 }
 
+// ---------- First-person viewmodel ----------
+// Arm + disc + shield hang off the camera, drawn on top of the world so they never clip into walls.
+let fpsView = true;
+try { fpsView = localStorage.getItem('discduel.view') !== 'third'; } catch (e) { /* storage unavailable */ }
+const vm = new THREE.Group();
+const vmRig = new THREE.Group();
+vm.add(vmRig);
+camera.add(vm);
+scene.add(camera);
+{
+  const body = new THREE.MeshStandardMaterial({ color: 0x0b111b, metalness: 0.6, roughness: 0.35 });
+  const glow = new THREE.MeshBasicMaterial({ color: COL_YOU });
+  const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.6, 12), body);
+  forearm.rotation.x = -1.25; forearm.position.set(0, -0.06, 0.12);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.42, 0.012), glow);
+  stripe.rotation.x = -1.25; stripe.position.set(-0.05, -0.02, 0.12);
+  const glove = new THREE.Mesh(new THREE.SphereGeometry(0.07, 14, 10), body);
+  glove.position.set(0, 0.03, -0.16);
+  // A glowing cuff so the dark arm reads against the dark arena.
+  const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.01, 6, 24), glow);
+  cuff.rotation.x = 0.32; cuff.position.set(0, -0.02, -0.08);
+  vmRig.add(forearm, stripe, glove, cuff);
+}
+const vmDisc = makeDiscMesh(COL_YOU);
+vmDisc.scale.setScalar(0.3);
+vmDisc.rotation.set(0.55, 0, 1.25);
+vmDisc.position.set(-0.03, 0.08, -0.2);
+vmRig.add(vmDisc);
+const vmShield = new THREE.Mesh(new THREE.CircleGeometry(0.42, 6), new THREE.MeshBasicMaterial({ color: COL_YOU, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+vmShield.position.set(0, -0.04, -0.62);
+vm.add(vmShield);
+vm.traverse(o => {
+  if (!o.material) return;
+  o.material = o.material.clone();
+  o.material.depthTest = false; o.material.depthWrite = false;
+  o.renderOrder = 999;
+});
+const vmShieldMat = vmShield.material;
+const VM_BASE = new V3(0.38, -0.32, -0.55);
+const vmState = { bob: 0, pos: VM_BASE.clone(), rx: 0, rz: 0 };
+function updateViewmodel(dt, active) {
+  vm.visible = active;
+  if (!active) return;
+  const p = player, k = chargeFrac(p), held = p.disc.state === 'held';
+  const sp = Math.hypot(p.vel.x, p.vel.z);
+  if (p.onGround && p.slideT <= 0 && !reducedMotion) vmState.bob += sp * dt * 1.1;
+  const bob = reducedMotion ? 0 : Math.min(1, sp / MOVE);
+  const target = tmp3.copy(VM_BASE);
+  target.x += Math.sin(vmState.bob) * 0.012 * bob;
+  target.y += Math.abs(Math.cos(vmState.bob)) * 0.014 * bob - (p.onGround ? 0 : 0.03);
+  let rx = 0, rz = 0, rate = 12;
+  if (p.throwAnim > 0) { target.set(0.12, -0.18, -0.85); rx = -0.5; rate = 40; }       // punch forward
+  else if (p.charging) {                                                              // pull back and up
+    target.x += 0.06 + 0.05 * k; target.y += 0.06 + 0.06 * k; target.z += 0.05 + 0.06 * k;
+    rz = -0.3 - 0.3 * k; rx = 0.1 + 0.12 * k; rate = 16;
+  } else if (!held) { target.y -= 0.12; rate = 8; }                                 // empty hand drops
+  const a = Math.min(1, rate * dt);
+  vmState.pos.lerp(target, a);
+  vmState.rx += (rx - vmState.rx) * a; vmState.rz += (rz - vmState.rz) * a;
+  vmRig.position.copy(vmState.pos);
+  vmRig.rotation.set(vmState.rx, 0, vmState.rz);
+  vmDisc.visible = held;
+  vmDisc.scale.setScalar(0.3 + 0.08 * k);
+  const so = p.blockT > 0 ? 0.25 + 0.3 * (p.blockT / BLOCK_T) : 0;
+  vmShield.visible = so > 0;
+  vmShieldMat.opacity = so;
+}
+
 // ---------- Camera ----------
 function updateCamera(dt) {
-  if (state.mode === 'playing' || state.mode === 'paused') {
+  const inMatch = state.mode === 'playing' || state.mode === 'paused';
+  const firstPerson = inMatch && fpsView;
+  // In first person your own body would fill the screen; others still see it.
+  const m = player.mesh;
+  if (firstPerson) { m.group.visible = false; m.foot.visible = false; m.blob.visible = false; }
+  else { m.foot.visible = true; m.blob.visible = true; }
+  updateViewmodel(dt, firstPerson);
+  if (inMatch) {
     const p = player;
     cam.dir.set(-Math.sin(p.yaw) * Math.cos(p.pitch), Math.sin(p.pitch), -Math.cos(p.yaw) * Math.cos(p.pitch));
-    cam.pos.set(p.pos.x, p.pos.y + 2.2 - 0.7 * p.mesh.tilt, p.pos.z).addScaledVector(cam.dir, -5.2).addScaledVector(rightOf(p, tmp), 1.25);
+    if (firstPerson) {
+      // Eye height drops into a slide; a small head bob while running.
+      const sp = Math.hypot(p.vel.x, p.vel.z), bob = reducedMotion || !p.onGround ? 0 : Math.min(1, sp / MOVE);
+      cam.pos.set(p.pos.x, p.pos.y + 1.72 - 0.8 * m.tilt + Math.abs(Math.sin(vmState.bob)) * 0.05 * bob, p.pos.z);
+    } else {
+      cam.pos.set(p.pos.x, p.pos.y + 2.2 - 0.7 * m.tilt, p.pos.z).addScaledVector(cam.dir, -5.2).addScaledVector(rightOf(p, tmp), 1.25);
+    }
     cam.pos.x = clamp(cam.pos.x, -HALF + 0.3, HALF - 0.3);
     cam.pos.z = clamp(cam.pos.z, -HALF + 0.3, HALF - 0.3);
     cam.pos.y = clamp(cam.pos.y, 0.3, CEIL - 0.3);
@@ -1110,9 +1241,10 @@ function updateCamera(dt) {
     }
     camera.lookAt(tmp.copy(cam.pos).add(cam.dir));
     // Hit kick: a quick FOV punch that settles back.
-    const fov = 72 + (reducedMotion ? 0 : state.kick * 6);
+    const fov = (firstPerson ? 78 : 72) + (reducedMotion ? 0 : state.kick * 6);
     if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
   } else {
+    if (camera.fov !== 72) { camera.fov = 72; camera.updateProjectionMatrix(); }
     cam.orbit += dt * 0.09;
     camera.position.set(Math.sin(cam.orbit) * 9.5, 6 + Math.sin(cam.orbit * 0.7) * 1.2, Math.cos(cam.orbit) * 9.5);
     camera.lookAt(0, 2.5, 0);
@@ -1128,7 +1260,7 @@ const cpu = makeFighter('CPU', COL_CPU, true);
 
 function resetFighter(f, z, yaw) {
   f.pos.set(0, 0, z); f.vel.set(0, 0, 0); f.wish.set(0, 0, 0);
-  f.yaw = yaw; f.pitch = 0.08; f.dashT = f.dashCd = f.blockT = f.blockCd = f.invuln = f.flash = 0;
+  f.yaw = yaw; f.pitch = 0; f.dashT = f.dashCd = f.blockT = f.blockCd = f.invuln = f.flash = 0;
   f.dmg = f.hits = f.throws = f.banks = f.reflects = 0;
   cancelCharge(f);
   f.throwAnim = f.slideT = f.slideCd = f.wallJumpCd = 0; f.airDash = f.dashAir = false;
@@ -1154,10 +1286,13 @@ function show(name) {
   ui.hud.hidden = !(name === 'playing' || name === 'paused');
 }
 function lock() {
+  // Ask for raw (unaccelerated) mouse counts so cm/360° is exact; fall back to a plain lock where unsupported.
+  const el = renderer.domElement;
+  const plain = () => { try { const q = el.requestPointerLock(); if (q && q.catch) q.catch(() => {}); } catch (e) { /* unavailable: mouse movement still aims */ } };
   try {
-    const p = renderer.domElement.requestPointerLock();
-    if (p && p.catch) p.catch(() => {});
-  } catch (e) { /* pointer lock unavailable: mouse movement still aims */ }
+    const p = el.requestPointerLock({ unadjustedMovement: true });
+    if (p && p.catch) p.catch(e => { if (e && e.name === 'NotSupportedError') plain(); });
+  } catch (e) { plain(); }
 }
 function unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
 
@@ -1238,6 +1373,10 @@ addEventListener('keydown', e => {
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryDash(player);
   if (e.code === 'KeyQ') tryBlock(player);
   if (e.code === 'KeyC') trySlide(player);
+  if (e.code === 'KeyV') {
+    fpsView = !fpsView;
+    try { localStorage.setItem('discduel.view', fpsView ? 'fps' : 'third'); } catch (err) { /* storage unavailable */ }
+  }
   if (e.code === 'Escape' || e.code === 'KeyP') pause();
 });
 addEventListener('keydown', e => { if (e.code === 'KeyM') muted = !muted; });
@@ -1245,9 +1384,9 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (!net.match) pause(); });
 addEventListener('mousemove', e => {
   if (state.mode !== 'playing') return;
-  const s = 0.0022 * sens;
+  const s = radPerCount();
   player.yaw -= (e.movementX || 0) * s;
-  player.pitch = clamp(player.pitch - (e.movementY || 0) * s, -1.2, 1.3);
+  player.pitch = clamp(player.pitch - (e.movementY || 0) * s, -PITCH_MAX, PITCH_MAX);
 });
 renderer.domElement.addEventListener('mousedown', e => {
   if (state.mode !== 'playing') return;
@@ -1256,13 +1395,47 @@ renderer.domElement.addEventListener('mousedown', e => {
   if (e.button === 2) tryBlock(player);
 });
 addEventListener('mouseup', e => { if (e.button === 0 && state.mode === 'playing') playerRelease(); });
-function setSens(v) {
-  sens = clamp(+v || 1, 0.3, 2.5);
-  for (const id of ['sens', 'sensPause']) { $(id).value = String(sens); $(id + 'Out').textContent = sens.toFixed(2) + '×'; }
-  try { localStorage.setItem('discduel.sens', String(sens)); } catch (e) { /* storage unavailable */ }
+// The menu and pause screens each have a copy of the sensitivity controls (ids end in "P" on pause).
+function renderSens() {
+  const r = SENS_RANGE[sensCfg.unit], v = sensCfg.unit === 'cm' ? sensCfg.cm : sensCfg.mult;
+  for (const sfx of ['', 'P']) {
+    $('sensUnit' + sfx).value = sensCfg.unit;
+    for (const id of ['sensRange', 'sensNum']) {
+      const el = $(id + sfx);
+      el.min = r.min; el.max = r.max; el.step = r.step;
+      if (document.activeElement !== el || id === 'sensRange') el.value = String(+v.toFixed(2));
+    }
+    $('sensDpi' + sfx).value = String(sensCfg.dpi);
+    $('sensDpi' + sfx).closest('.dpi').hidden = sensCfg.unit !== 'cm';
+  }
+  try { localStorage.setItem('discduel.sens2', JSON.stringify(sensCfg)); } catch (e) { /* storage unavailable */ }
 }
-for (const id of ['sens', 'sensPause']) $(id).addEventListener('input', e => setSens(e.target.value));
-setSens(sens);
+function setSensValue(v) {
+  const r = SENS_RANGE[sensCfg.unit];
+  v = +v;
+  if (!(v > 0)) return;
+  v = clamp(v, r.min, r.max);
+  if (sensCfg.unit === 'cm') sensCfg.cm = v; else sensCfg.mult = v;
+  renderSens();
+}
+for (const sfx of ['', 'P']) {
+  $('sensRange' + sfx).addEventListener('input', e => setSensValue(e.target.value));
+  $('sensNum' + sfx).addEventListener('change', e => setSensValue(e.target.value));
+  $('sensUnit' + sfx).addEventListener('change', e => {
+    // Switching units keeps the same feel: convert the current turn rate into the new unit.
+    const rad = radPerCount();
+    sensCfg.unit = e.target.value === 'cm' ? 'cm' : 'mult';
+    if (sensCfg.unit === 'cm') sensCfg.cm = clamp(cmFromRad(rad, sensCfg.dpi), SENS_RANGE.cm.min, SENS_RANGE.cm.max);
+    else sensCfg.mult = clamp(rad / BASE_RAD, SENS_RANGE.mult.min, SENS_RANGE.mult.max);
+    renderSens();
+  });
+  $('sensDpi' + sfx).addEventListener('change', e => {
+    const d = Math.round(+e.target.value);
+    if (d >= 100 && d <= 32000) sensCfg.dpi = d;
+    renderSens();
+  });
+}
+renderSens();
 addEventListener('contextmenu', e => e.preventDefault());
 document.addEventListener('pointerlockchange', () => {
   const locked = document.pointerLockElement === renderer.domElement;

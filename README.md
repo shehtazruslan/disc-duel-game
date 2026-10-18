@@ -21,9 +21,10 @@ A 1v1 disc-throwing duel in a compact neon arena. Discs ricochet off every wall,
 | Space | Jump; in the air next to a wall, wall jump |
 | Shift | Dash; once more in the air, holding your height |
 | C | Slide, ducking under high discs |
+| V | Switch between first person (default) and over-the-shoulder view |
 | Esc / M | Pause / Mute |
 
-Mouse sensitivity is on the menu and pause screens.
+Mouse sensitivity is on the menu and pause screens, as a multiplier or in cm/360° (enter your mouse DPI). The game asks the browser for raw mouse input, so cm/360° is exact in Chrome and Edge.
 
 ## Scoring
 
