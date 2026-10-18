@@ -105,6 +105,9 @@ body {
 .meter b { display: block; width: 110px; height: 4px; background: var(--line); }
 .meter i { display: block; height: 100%; width: 100%; background: var(--you); }
 .meter i.off { background: var(--dim); }
+.meter.armed { color: var(--cpu); }
+.meter.armed b { outline: 1px solid var(--cpu); outline-offset: 2px; }
+.meter.armed i { background: var(--cpu); }
 
 /* Overlays */
 .overlay {
@@ -226,12 +229,14 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     <div class="chip" id="discChip">Disc ready</div>
     <div class="meter">DASH<b><i id="dashBar"></i></b></div>
     <div class="meter">SHIELD<b><i id="shieldBar"></i></b></div>
+    <div class="meter special" id="heavyMeter"><span id="heavyLabel">HEAVY · E</span><b><i id="heavyBar"></i></b></div>
+    <div class="meter special" id="splitMeter"><span id="splitLabel">SPLIT · R</span><b><i id="splitBar"></i></b></div>
   </div>
 </div>
 
 <section class="overlay" id="menu">
   <div class="panel">
-    <p class="eyebrow">1v1 · 22 m arena · 9 m walls · discs ricochet</p>
+    <p class="eyebrow">1v1 · 22 × 32 m arena · 9 m walls · discs ricochet</p>
     <h1>Disc Duel</h1>
     <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the two-minute clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
     <div class="diff" role="radiogroup" aria-label="CPU difficulty">
@@ -250,7 +255,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <p class="net-msg" id="netMsg"></p>
     </div>
     <p class="net-msg" id="offlineNote">Online matches need a signed-in claude.ai account with access to this page, or the game opened from its own website.</p>
-    <p class="hint">WASD to move · hold left click to wind up and throw · right click to shield. Every control is listed in Settings.</p>
+    <p class="hint">WASD to move · hold left click to wind up and throw · flick the mouse as you release to curve · E Heavy, R Split. Every control is listed in Settings.</p>
     <button type="button" class="ghost" id="settingsBtn">Settings &amp; controls</button>
     <p class="scoring"><b>Direct</b> 12 · <b>each bank</b> +8 · <b>reflect</b> +10 · <b>recall hit</b> 10 · <b>full wind-up</b> up to +10. The dotted line previews your first two bounces.</p>
     <p class="touch-note">This game needs a keyboard and mouse.</p>
@@ -319,6 +324,8 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <dl class="controls fixed">
         <dt>Mouse</dt><dd>Aim. The crosshair turns orange on your opponent</dd>
         <dt>Hold left click</dt><dd>Wind up, release to throw. Click while the disc flies to recall it</dd>
+        <dt>Flick the mouse as you release</dt><dd>Curves the throw that way. A faster flick curves more; most of the spin is lost at the first wall</dd>
+        <dt>Heavy / Split</dt><dd>Arm with their key, the next throw uses it, then it recharges (7 s). Heavy: slower, bigger, +10 damage, goes through shields. Split: throws off two shards at its first bounce (8 damage each)</dd>
         <dt>Right click</dt><dd>Shield, same as the Shield key. Disc must be in hand</dd>
         <dt>Jump in the air at a wall</dt><dd>Wall jump</dd>
         <dt>Esc</dt><dd>Pause</dd>
@@ -357,24 +364,31 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 const V3 = THREE.Vector3;
 
 // ---------- Tuning ----------
-// Compact, low-ceilinged box: 22 m square floor, 9 m walls.
-const ARENA = 22, HALF = ARENA / 2, CEIL = 9;
+// Low-ceilinged rectangle: 22 m wide (x), 32 m long (z, the axis the players face each other on), 9 m walls.
+const ARENA_X = 22, ARENA_Z = 32, HALF_X = ARENA_X / 2, HALF_Z = ARENA_Z / 2, CEIL = 9;
+const HALF_OF = { x: HALF_X, z: HALF_Z };
 const DISC_R = 0.45, DISC_SPEED = 30, RETURN_SPEED = 34, MAX_BOUNCES = 3;
 // Hold to wind up: a tap throws at DISC_SPEED, a full CHARGE_T hold at CHARGE_SPEED; you move slower meanwhile.
 const CHARGE_SPEED = 46, CHARGE_T = 0.8, CHARGE_MOVE = 0.55, THROW_ANIM = 0.22;
 const PLAYER_R = 0.6, PLAYER_H = 2.1;
 const GRAV = 32, JUMP_V = 12, MOVE = 9, DASH_V = 26, DASH_T = 0.16, DASH_CD = 1.1;
 const SLIDE_T = 0.55, SLIDE_CD = 1.0, WALLJUMP_CD = 0.3;
+// Curve: how fast you were turning just before release sets the disc's spin (rad/s it turns its path).
+const CURVE_GAIN = 0.55, CURVE_MAX = 2.4, CURVE_MIN_RATE = 0.8;
+// Specials: arm with their key, the next throw uses it, then it recharges.
+const SPECIAL_CD = { heavy: 7, split: 7 }, DISC_KINDS = ['normal', 'heavy', 'split'];
+const HEAVY_R = 0.75, HEAVY_SCALE = 1.7, HEAVY_SPEED = 0.72, HEAVY_BONUS = 10;
+const SHARD_DMG = 8, SHARD_LIFE = 1.3, SHARD_SPREAD = 0.45, SHARD_R = 0.3;
 const BLOCK_T = 0.4, BLOCK_CD = 1.0, INVULN = 0.5, ROUND = 120;
 const DIFF = {
-  easy:   { react: 0.22, aimErr: 0.09,  blockP: 0.12, dodgeP: 0.35, throwDelay: [1.4, 2.6], bankP: 0.15, chargeMax: 0.25, slideP: 0.15 },
-  normal: { react: 0.36, aimErr: 0.045, blockP: 0.3,  dodgeP: 0.6,  throwDelay: [1.0, 2.0], bankP: 0.35, chargeMax: 0.6,  slideP: 0.3 },
-  hard:   { react: 0.5,  aimErr: 0.02,  blockP: 0.5,  dodgeP: 0.85, throwDelay: [0.45, 1.1], bankP: 0.5, chargeMax: 0.8,  slideP: 0.45 },
+  easy:   { react: 0.22, aimErr: 0.09,  blockP: 0.12, dodgeP: 0.35, throwDelay: [1.4, 2.6], bankP: 0.15, chargeMax: 0.25, slideP: 0.15, specialP: 0.1 },
+  normal: { react: 0.36, aimErr: 0.045, blockP: 0.3,  dodgeP: 0.6,  throwDelay: [1.0, 2.0], bankP: 0.35, chargeMax: 0.6,  slideP: 0.3, specialP: 0.25 },
+  hard:   { react: 0.5,  aimErr: 0.02,  blockP: 0.5,  dodgeP: 0.85, throwDelay: [0.45, 1.1], bankP: 0.5, chargeMax: 0.8,  slideP: 0.45, specialP: 0.4 },
 };
 const COL_YOU = 0x3ff0ff, COL_CPU = 0xff8a2a;
 const AXES = ['x', 'y', 'z'];
-const BMIN = new V3(-HALF + DISC_R, DISC_R, -HALF + DISC_R);
-const BMAX = new V3(HALF - DISC_R, CEIL - DISC_R, HALF - DISC_R);
+const BMIN = new V3(-HALF_X + DISC_R, DISC_R, -HALF_Z + DISC_R);
+const BMAX = new V3(HALF_X - DISC_R, CEIL - DISC_R, HALF_Z - DISC_R);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -393,8 +407,8 @@ const net = {
 };
 
 // ---------- Settings (saved in this browser) ----------
-const DEFAULT_BINDS = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', dash: 'ShiftLeft', slide: 'KeyC', shield: 'KeyQ', view: 'KeyV', mute: 'KeyM' };
-const BIND_LABELS = [['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['dash', 'Dash'], ['slide', 'Slide'], ['shield', 'Shield'], ['view', 'Switch view'], ['mute', 'Mute']];
+const DEFAULT_BINDS = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', dash: 'ShiftLeft', slide: 'KeyC', shield: 'KeyQ', heavy: 'KeyE', split: 'KeyR', view: 'KeyV', mute: 'KeyM' };
+const BIND_LABELS = [['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['dash', 'Dash'], ['slide', 'Slide'], ['shield', 'Shield'], ['heavy', 'Arm Heavy disc'], ['split', 'Arm Split disc'], ['view', 'Switch view'], ['mute', 'Mute']];
 const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', binds: Object.assign({}, DEFAULT_BINDS) };
 try {
   const saved = JSON.parse(localStorage.getItem('discduel.settings') || 'null');
@@ -430,7 +444,7 @@ if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
   } catch (e) { composer = null; }
 }
 
-// Grid cells stay square on every face: floor/ceiling are ARENA×ARENA, walls ARENA×CEIL.
+// Grid cells stay square on every face: floor/ceiling are ARENA_X×ARENA_Z, the long walls ARENA_Z×CEIL, the end walls ARENA_X×CEIL.
 // `fill` sets the panel between the lines: solid for the floor, nearly clear for glass.
 function gridTexture(wUnits, hUnits, fill = '#04070e') {
   const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
@@ -461,33 +475,34 @@ const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: t
 // Walls and ceiling are glass: neon lines stay bright, the panels between them let you see out.
 const glassMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, side: THREE.BackSide, transparent: true, depthWrite: false });
 const GLASS_FILL = 'rgba(6, 14, 26, 0.28)';
-const wallMat = glassMat(gridTexture(ARENA, CEIL, GLASS_FILL)), ceilMat = glassMat(gridTexture(ARENA, ARENA, GLASS_FILL));
-const floorMat = roomMat(gridTexture(ARENA, ARENA));
+const sideMat = glassMat(gridTexture(ARENA_Z, CEIL, GLASS_FILL)), endMat = glassMat(gridTexture(ARENA_X, CEIL, GLASS_FILL));
+const ceilMat = glassMat(gridTexture(ARENA_X, ARENA_Z, GLASS_FILL));
+const floorMat = roomMat(gridTexture(ARENA_X, ARENA_Z));
 // BoxGeometry face order: +x, -x, +y (ceiling), -y (floor), +z, -z
-const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA, CEIL, ARENA), [wallMat, wallMat, ceilMat, floorMat, wallMat, wallMat]);
+const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA_X, CEIL, ARENA_Z), [sideMat, sideMat, ceilMat, floorMat, endMat, endMat]);
 room.position.y = CEIL / 2;
 scene.add(room);
-const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA - 0.02, CEIL - 0.02, ARENA - 0.02)), new THREE.LineBasicMaterial({ color: 0x8fe8ff }));
+const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X - 0.02, CEIL - 0.02, ARENA_Z - 0.02)), new THREE.LineBasicMaterial({ color: 0x8fe8ff }));
 edges.position.y = CEIL / 2;
 scene.add(edges);
 // Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass.
 // A few of them run exhibition matches (see "Stadium" below); the rest are empty for now.
-const GAP_X = ARENA + 10, GAP_Y = CEIL + 8;
+const GAP_X = ARENA_X + 10, GAP_Z = ARENA_Z + 10, GAP_Y = CEIL + 8;
 {
-  const ring = new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA, CEIL, ARENA)).attributes.position.array;
+  const ring = new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X, CEIL, ARENA_Z)).attributes.position.array;
   const pts = [], spots = [];
   for (let ix = -2; ix <= 2; ix++) for (let iy = -1; iy <= 1; iy++) for (let iz = -2; iz <= 2; iz++) {
     if (!ix && !iy && !iz) continue;
-    const ox = ix * GAP_X, oy = iy * GAP_Y, oz = iz * GAP_X;
+    const ox = ix * GAP_X, oy = iy * GAP_Y, oz = iz * GAP_Z;
     for (let i = 0; i < ring.length; i += 3) pts.push(ring[i] + ox, ring[i + 1] + oy + CEIL / 2, ring[i + 2] + oz);
     spots.push([ox, oy + 0.01, oz]);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x1c5f82, transparent: true, opacity: 0.55 })));
-  const floorTex = gridTexture(ARENA, ARENA, 'rgba(0, 0, 0, 0)');
+  const floorTex = gridTexture(ARENA_X, ARENA_Z, 'rgba(0, 0, 0, 0)');
   const floors = new THREE.InstancedMesh(
-    new THREE.PlaneGeometry(ARENA, ARENA).rotateX(-Math.PI / 2),
+    new THREE.PlaneGeometry(ARENA_X, ARENA_Z).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ map: floorTex, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
     spots.length
   );
@@ -608,7 +623,8 @@ function makeDisc(owner, color) {
   trail.frustumCulled = false;
   trail.visible = false;
   scene.add(trail);
-  return { owner, color, mesh, light, trail, trailN: N, pos: new V3(), vel: new V3(), state: 'held', bounces: 0, life: 0, returnT: 0, target: null, credit: null, reflected: false, launchId: 0 };
+  return { owner, color, mesh, light, trail, trailN: N, pos: new V3(), vel: new V3(), state: 'held', bounces: 0, life: 0, returnT: 0, target: null, credit: null, reflected: false, launchId: 0,
+    kind: 'normal', spin: 0, splitDone: false };
 }
 
 function makeFighter(name, color, isCPU) {
@@ -617,6 +633,7 @@ function makeFighter(name, color, isCPU) {
     pos: new V3(), vel: new V3(), wish: new V3(), dashDir: new V3(),
     yaw: 0, pitch: 0, onGround: true, dashT: 0, dashCd: 0, blockT: 0, blockCd: 0, invuln: 0, flash: 0, walk: 0,
     charging: false, chargeT: 0, throwAnim: 0, slideT: 0, slideCd: 0, slideDir: new V3(), airDash: false, dashAir: false, wallJumpCd: 0,
+    cd: { heavy: 0, split: 0 }, armed: null, yawRate: 0, lastYaw: 0,
     dmg: 0, hits: 0, throws: 0, banks: 0, reflects: 0, ai: null,
   };
   f.disc = makeDisc(f, color);
@@ -769,7 +786,7 @@ function updateHums() {
     if (d.hum) {
       const sp = d.vel.length();
       setAudioPos(d.hum.p, d.pos);
-      d.hum.o.frequency.setTargetAtTime(60 + sp * 3, ac.currentTime, 0.05);
+      d.hum.o.frequency.setTargetAtTime((60 + sp * 3) * (d.kind === 'heavy' ? 0.6 : 1), ac.currentTime, 0.05);
       d.hum.f.frequency.setTargetAtTime(500 + sp * 18, ac.currentTime, 0.05);
     }
   }
@@ -859,9 +876,9 @@ function tryJump(f) {
   if (f.onGround) { f.vel.y = JUMP_V; f.onGround = false; f.slideT = 0; return; }
   // Wall jump: in the air and close to a wall, kick off it.
   if (f.wallJumpCd > 0) return;
-  const lim = HALF - PLAYER_R - 0.45;
-  let nx = f.pos.x > lim ? -1 : f.pos.x < -lim ? 1 : 0;
-  let nz = f.pos.z > lim ? -1 : f.pos.z < -lim ? 1 : 0;
+  const limX = HALF_X - PLAYER_R - 0.45, limZ = HALF_Z - PLAYER_R - 0.45;
+  let nx = f.pos.x > limX ? -1 : f.pos.x < -limX ? 1 : 0;
+  let nz = f.pos.z > limZ ? -1 : f.pos.z < -limZ ? 1 : 0;
   if (!nx && !nz) return;
   const l = Math.hypot(nx, nz); nx /= l; nz /= l;
   const into = f.vel.x * nx + f.vel.z * nz;
@@ -869,7 +886,7 @@ function tryJump(f) {
   f.vel.x += nx * 11; f.vel.z += nz * 11;
   f.vel.y = JUMP_V * 0.95;
   f.wallJumpCd = WALLJUMP_CD; f.airDash = false; f.dashT = 0;
-  tmp.set(nx ? -nx * (HALF - 0.03) : f.pos.x, f.pos.y + 1, nz ? -nz * (HALF - 0.03) : f.pos.z);
+  tmp.set(nx ? -nx * (HALF_X - 0.03) : f.pos.x, f.pos.y + 1, nz ? -nz * (HALF_Z - 0.03) : f.pos.z);
   spawnRing(tmp, tmp2.set(nx, 0, nz), f.color, 1.6, 0.4);
   sfx('walljump', f.pos);
 }
@@ -901,10 +918,16 @@ function cancelCharge(f) {
   f.charging = false; f.chargeT = 0;
   if (f === player) chargeSound(false);
 }
-function throwDisc(f, dir, speed = DISC_SPEED) {
+function throwDisc(f, dir, speed = DISC_SPEED, kind = 'normal', spin = 0) {
   const d = f.disc;
+  // A special still recharging falls back to a normal throw (the host checks a guest's request the same way).
+  if (kind !== 'heavy' && kind !== 'split') kind = 'normal';
+  if (kind !== 'normal') { if (f.cd[kind] > 0) kind = 'normal'; else f.cd[kind] = SPECIAL_CD[kind]; }
+  f.armed = null;
   handPos(f, d.pos);
-  d.vel.copy(dir).normalize().multiplyScalar(clamp(speed, DISC_SPEED, CHARGE_SPEED));
+  speed = clamp(speed, DISC_SPEED, CHARGE_SPEED) * (kind === 'heavy' ? HEAVY_SPEED : 1);
+  d.vel.copy(dir).normalize().multiplyScalar(speed);
+  d.kind = kind; d.spin = clamp(spin || 0, -CURVE_MAX, CURVE_MAX); d.splitDone = false;
   d.state = 'flying'; d.bounces = 0; d.life = 0; d.reflected = false;
   d.target = other(f); d.credit = f; d.launchId++;
   f.throws++;
@@ -914,9 +937,9 @@ function throwDisc(f, dir, speed = DISC_SPEED) {
   netFx('t', d.pos, null, f);
   sfx('throw', d.pos);
 }
-function startReturn(d) { d.state = 'returning'; d.returnT = 0; d.reflected = false; }
+function startReturn(d) { d.state = 'returning'; d.returnT = 0; d.reflected = false; d.spin = 0; }
 function catchDisc(d) {
-  d.state = 'held';
+  d.state = 'held'; d.kind = 'normal';
   if (d.owner.ai) d.owner.ai.throwT = Math.max(d.owner.ai.throwT, 0.35);
   const catchAt = chestOf(d.owner, new V3());
   netFx('k', catchAt, null, d.owner);
@@ -929,7 +952,7 @@ function deflect(d, blocker) {
   forwardOf(blocker, tmp2);
   d.vel.copy(tmp).multiplyScalar(0.65).addScaledVector(tmp2, 0.35).normalize().multiplyScalar(sp);
   d.pos.addScaledVector(d.vel, 0.03);
-  d.state = 'flying'; d.bounces = 0; d.life = 0;
+  d.state = 'flying'; d.bounces = 0; d.life = 0; d.spin = 0;
   d.target = attacker; d.credit = blocker; d.reflected = true; d.launchId++;
   blocker.blockT = Math.min(blocker.blockT, 0.12);
   spawnRing(d.pos, tmp2, blocker.color, 2.2, 0.35);
@@ -947,31 +970,38 @@ function hit(d, victim) {
     if (d.bounces > 0) credit.banks++;
     if (d.reflected) credit.reflects++;
   }
+  if (d.kind === 'heavy') { dmg += HEAVY_BONUS; label = 'HEAVY ' + label; }
+  applyHit(victim, credit, dmg, label, d.vel, d.kind === 'heavy' ? 17 : 13, d.vel.length() > DISC_SPEED + 8 || d.kind === 'heavy');
+  startReturn(d);
+}
+// Everything a landed hit does, for discs and split shards alike.
+function applyHit(victim, credit, dmg, label, dirVel, knock, big) {
   credit.dmg += dmg; credit.hits++;
-  tmp.set(d.vel.x, 0, d.vel.z).normalize();
-  victim.vel.x += tmp.x * 13; victim.vel.z += tmp.z * 13;
-  victim.vel.y = Math.max(victim.vel.y, 6.5); victim.onGround = false;
+  tmp.set(dirVel.x, 0, dirVel.z).normalize();
+  victim.vel.x += tmp.x * knock; victim.vel.z += tmp.z * knock;
+  victim.vel.y = Math.max(victim.vel.y, knock * 0.5); victim.onGround = false;
   victim.invuln = INVULN; victim.flash = 1;
   cancelCharge(victim);
   // Freeze-frame sells the impact; online it would desync the clocks, so there it's only the camera kick.
-  if (!net.match) state.hitStop = d.vel.length() > DISC_SPEED + 8 ? 0.11 : 0.07;
-  if (victim === player || credit === player) state.kick = 1;
-  if (net.role === 'host' && net.phase === 'play' && victim === cpu) net.gh = { n: net.gh.n + 1, x: r2(tmp.x), z: r2(tmp.z) };
+  if (!net.match) state.hitStop = big ? 0.11 : 0.07;
+  if (victim === player || credit === player) state.kick = big ? 1.3 : 1;
+  if (net.role === 'host' && net.phase === 'play' && victim === cpu) net.gh = { n: net.gh.n + 1, x: r2(tmp.x * knock / 13), z: r2(tmp.z * knock / 13) };
   chestOf(victim, tmp2); tmp2.y += 1.2;
   floatText(tmp2, label + ' +' + dmg, credit.color);
   netFx('h', tmp2, null, credit, label + ' +' + dmg);
   spawnRing(chestOf(victim, tmp2), tmp.copy(camera.position).sub(tmp2), credit.color, 2.5, 0.4);
-  if (victim === player) { state.shake = 0.55; state.hurt = 1; }
+  if (victim === player) { state.shake = big ? 0.7 : 0.55; state.hurt = 1; }
   sfx('hit', tmp2);
-  startReturn(d);
 }
 function onBounce(d, axis, side) {
   tmp.copy(d.pos);
-  tmp[axis] = axis === 'y' ? (side > 0 ? CEIL - 0.03 : 0.03) : side * (HALF - 0.03);
+  tmp[axis] = axis === 'y' ? (side > 0 ? CEIL - 0.03 : 0.03) : side * (HALF_OF[axis] - 0.03);
   tmp2.set(0, 0, 0); tmp2[axis] = -side;
   spawnRing(tmp, tmp2, d.color, 1.4, 0.6);
   netFx('b', tmp, tmp2, d.owner);
   if (d.state === 'flying') {
+    d.spin *= 0.35;
+    if (d.kind === 'split' && !d.splitDone) { d.splitDone = true; spawnShards(d); }
     d.bounces++;
     if (d.bounces >= MAX_BOUNCES) startReturn(d);
   }
@@ -993,6 +1023,7 @@ function updateDisc(d, dt) {
       tmp.multiplyScalar(RETURN_SPEED / dist);
       d.vel.lerp(tmp, 1 - Math.exp(-7 * h));
     }
+    if (d.spin && d.state === 'flying') { curveVel(d.vel, d.spin * h); d.spin *= Math.exp(-0.5 * h); }
     d.pos.addScaledVector(d.vel, h);
     for (const a of AXES) {
       if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); onBounce(d, a, 1); }
@@ -1002,16 +1033,24 @@ function updateDisc(d, dt) {
     const victim = d.state === 'returning' ? other(d.owner) : d.target;
     if (victim.invuln <= 0) {
       const dist = distToFighter(d.pos, victim);
-      if (victim.blockT > 0 && d.state === 'flying' && dist < 1.8 && inFront(victim, d.pos)) deflect(d, victim);
-      else if (dist < PLAYER_R + DISC_R) { hit(d, victim); }
+      // A Heavy disc can't be reflected: it goes straight through the shield.
+      if (victim.blockT > 0 && d.state === 'flying' && d.kind !== 'heavy' && dist < 1.8 && inFront(victim, d.pos)) deflect(d, victim);
+      else if (dist < PLAYER_R + (d.kind === 'heavy' ? HEAVY_R : DISC_R)) { hit(d, victim); }
     }
   }
   if (d.state === 'flying' && d.life > 4.5) startReturn(d);
   discVisual(d, dt);
 }
+// Turn a velocity about the vertical axis (positive = to the thrower's left).
+function curveVel(v, a) {
+  const c = Math.cos(a), sn = Math.sin(a), vx = v.x, vz = v.z;
+  v.x = vx * c + vz * sn; v.z = -vx * sn + vz * c;
+}
 function discVisual(d, dt) {
   if (d.state === 'held') { d.mesh.visible = d.light.visible = d.trail.visible = false; return; }
   d.mesh.visible = d.light.visible = d.trail.visible = true;
+  d.mesh.scale.setScalar(d.kind === 'heavy' ? HEAVY_SCALE : 1);
+  d.light.intensity = d.kind === 'heavy' ? 3 : 1.8;
   d.mesh.position.copy(d.pos);
   d.mesh.rotation.y += dt * 22;
   d.mesh.rotation.z = Math.sin(d.life * 3) * 0.25;
@@ -1021,6 +1060,75 @@ function discVisual(d, dt) {
   arr[0] = d.pos.x; arr[1] = d.pos.y; arr[2] = d.pos.z;
   d.trail.geometry.attributes.position.needsUpdate = true;
 }
+
+// ---------- Split shards ----------
+// Short-lived extra discs a Split throws off at its first bounce. They bounce, can hit, and never return.
+const shards = [], shardPool = [];
+function shardMesh(i) {
+  while (shardPool.length <= i) {
+    const m = makeDiscMesh(0xffffff);
+    m.scale.setScalar(0.6);
+    m.visible = false;
+    scene.add(m);
+    shardPool.push({ mesh: m, color: -1 });
+  }
+  return shardPool[i];
+}
+function spawnShards(d) {
+  for (const sgn of [-1, 1]) {
+    const vel = d.vel.clone().multiplyScalar(0.9);
+    curveVel(vel, sgn * SHARD_SPREAD);
+    shards.push({ pos: d.pos.clone(), vel, owner: d.owner, credit: d.credit, target: d.target, life: SHARD_LIFE });
+  }
+  if (shards.length > 6) shards.splice(0, shards.length - 6);
+}
+function updateShards(dt) {
+  for (let i = shards.length - 1; i >= 0; i--) {
+    const sh = shards[i];
+    sh.life -= dt;
+    let gone = sh.life <= 0;
+    const steps = Math.max(1, Math.ceil(sh.vel.length() * dt / 0.25)), h = dt / steps;
+    for (let k = 0; k < steps && !gone; k++) {
+      sh.pos.addScaledVector(sh.vel, h);
+      for (const a of AXES) {
+        if (sh.pos[a] > BMAX[a]) { sh.pos[a] = 2 * BMAX[a] - sh.pos[a]; sh.vel[a] = -Math.abs(sh.vel[a]); }
+        else if (sh.pos[a] < BMIN[a]) { sh.pos[a] = 2 * BMIN[a] - sh.pos[a]; sh.vel[a] = Math.abs(sh.vel[a]); }
+      }
+      const v = sh.target;
+      if (v.invuln > 0) continue;
+      const dist = distToFighter(sh.pos, v);
+      if (v.blockT > 0 && dist < 1.8 && inFront(v, sh.pos)) {
+        // A shield just swats a shard away.
+        forwardOf(v, tmp3);
+        spawnRing(sh.pos, tmp3, v.color, 1.2, 0.3);
+        netFx('r', sh.pos, tmp3, v);
+        sfx('block', sh.pos);
+        gone = true;
+      } else if (dist < PLAYER_R + SHARD_R) {
+        applyHit(v, sh.credit, SHARD_DMG, 'SPLIT', sh.vel, 7, false);
+        gone = true;
+      }
+    }
+    if (gone) shards.splice(i, 1);
+  }
+}
+// Draw shards from [x, y, z, 'p' | 'c'] (whose color), shared by local play and the guest's view.
+function drawShards(list) {
+  const n = Math.max(list.length, shardPool.length);
+  for (let i = 0; i < n; i++) {
+    const sl = shardMesh(i), e = list[i];
+    sl.mesh.visible = !!e;
+    if (!e) continue;
+    sl.mesh.position.set(e[0], e[1], e[2]);
+    sl.mesh.rotation.y += 0.5;
+    const col = e[3] === 'p' ? player.color : cpu.color;
+    if (sl.color !== col) {
+      sl.color = col;
+      sl.mesh.traverse(o => { if (o.material && o.material.type === 'MeshBasicMaterial') o.material.color.setHex(col); });
+    }
+  }
+}
+function localShardList() { return shards.map(sh => [sh.pos.x, sh.pos.y, sh.pos.z, sh.owner === player ? 'p' : 'c']); }
 
 let clashCd = 0;
 function discClash(dt) {
@@ -1061,9 +1169,10 @@ function physics(f, dt) {
   f.throwAnim = Math.max(0, f.throwAnim - dt);
   f.slideCd = Math.max(0, f.slideCd - dt);
   f.wallJumpCd = Math.max(0, f.wallJumpCd - dt);
+  f.cd.heavy = Math.max(0, f.cd.heavy - dt); f.cd.split = Math.max(0, f.cd.split - dt);
   if (f.pos.y + PLAYER_H > CEIL) { f.pos.y = CEIL - PLAYER_H; f.vel.y = Math.min(0, f.vel.y); }
-  const lim = HALF - PLAYER_R;
   for (const a of ['x', 'z']) {
+    const lim = HALF_OF[a] - PLAYER_R;
     if (f.pos[a] > lim) { f.pos[a] = lim; f.vel[a] = Math.min(0, f.vel[a]); }
     if (f.pos[a] < -lim) { f.pos[a] = -lim; f.vel[a] = Math.max(0, f.vel[a]); }
   }
@@ -1155,9 +1264,9 @@ function aiUpdate(f, opp, cfg, dt) {
   let wx = -tz * ai.strafe * 0.85, wz = tx * ai.strafe * 0.85;
   const radial = clamp((dist - ai.prefDist) / 4, -1, 1);
   wx += tx * radial; wz += tz * radial;
-  const m = HALF - 3;
-  if (f.pos.x > m) wx -= (f.pos.x - m); if (f.pos.x < -m) wx += (-m - f.pos.x);
-  if (f.pos.z > m) wz -= (f.pos.z - m); if (f.pos.z < -m) wz += (-m - f.pos.z);
+  const mx = HALF_X - 3, mz = HALF_Z - 3;
+  if (f.pos.x > mx) wx -= (f.pos.x - mx); if (f.pos.x < -mx) wx += (-mx - f.pos.x);
+  if (f.pos.z > mz) wz -= (f.pos.z - mz); if (f.pos.z < -mz) wz += (-mz - f.pos.z);
   const wl = Math.hypot(wx, wz);
   if (wl > 0.15) f.wish.set(wx / wl * MOVE * 0.85, 0, wz / wl * MOVE * 0.85); else f.wish.set(0, 0, 0);
 
@@ -1174,7 +1283,7 @@ function aiUpdate(f, opp, cfg, dt) {
     const keyId = d.launchId + ':' + d.bounces + ':' + d.state;
     if (c.length() > 2.2 || ai.handled === keyId) continue;
     ai.handled = keyId;
-    if (d.state === 'flying' && f.disc.state === 'held' && f.blockCd <= 0 && Math.random() < cfg.blockP) {
+    if (d.state === 'flying' && d.kind !== 'heavy' && f.disc.state === 'held' && f.blockCd <= 0 && Math.random() < cfg.blockP) {
       ai.faceYaw = Math.atan2(-(d.pos.x - f.pos.x), -(d.pos.z - f.pos.z)); ai.faceT = BLOCK_T;
       f.yaw = ai.faceYaw;
       tryBlock(f);
@@ -1192,13 +1301,15 @@ function aiUpdate(f, opp, cfg, dt) {
     if (f.disc.state !== 'held' || f.blockT > 0) cancelCharge(f);
     else if (f.chargeT >= ai.chargeGoal) {
       const sp = chargeSpeed(f);
-      throwDisc(f, planShot(f, opp, cfg, sp), sp);
+      throwDisc(f, planShot(f, opp, cfg, sp * (f.armed === 'heavy' ? HEAVY_SPEED : 1)), sp, f.armed || 'normal');
       ai.throwT = rand(cfg.throwDelay[0], cfg.throwDelay[1]);
     }
   } else if (f.disc.state === 'held' && ai.throwT <= 0 && opp.invuln < 0.2 && f.blockT <= 0) {
     // Wind up for a random time, up to this difficulty's limit.
     f.charging = true; f.chargeT = 0;
     ai.chargeGoal = Math.random() * cfg.chargeMax;
+    f.armed = null;
+    if (Math.random() < cfg.specialP) f.armed = f.cd.heavy <= 0 && Math.random() < 0.5 ? 'heavy' : f.cd.split <= 0 ? 'split' : null;
   }
   ai.jumpT -= dt;
   if (ai.jumpT <= 0) { ai.jumpT = rand(2, 6); tryJump(f); }
@@ -1239,6 +1350,20 @@ function playerInput(dt) {
   if (player.wish.lengthSq() > 0) player.wish.normalize().multiplyScalar(MOVE);
   player.yaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * 2.4 * dt;
   player.pitch = clamp(player.pitch + ((keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)) * 1.6 * dt, -PITCH_MAX, PITCH_MAX);
+  // How fast you're turning, smoothed over ~0.08 s: a sideways flick at release curves the throw.
+  if (dt > 0) {
+    const rate = clamp((player.yaw - player.lastYaw) / dt, -20, 20);
+    player.yawRate += (rate - player.yawRate) * Math.min(1, dt / 0.08);
+  }
+  player.lastYaw = player.yaw;
+}
+function releaseSpin(f) {
+  return Math.abs(f.yawRate) < CURVE_MIN_RATE ? 0 : clamp(f.yawRate * CURVE_GAIN, -CURVE_MAX, CURVE_MAX);
+}
+// Arm a special for the next throw (press again to disarm). Only when it has recharged.
+function toggleArm(f, kind) {
+  if (f.cd[kind] > 0) return;
+  f.armed = f.armed === kind ? null : kind;
 }
 function playerAimDir(out) {
   const o = clampBounds(cam.pos.clone());
@@ -1270,24 +1395,28 @@ function playerPress() {
 }
 function playerRelease() {
   if (!player.charging) return;
-  const speed = chargeSpeed(player);
+  const speed = chargeSpeed(player), spin = releaseSpin(player);
+  const kind = player.armed && player.cd[player.armed] <= 0 ? player.armed : 'normal';
   cancelCharge(player);
   if (player.disc.state !== 'held' || (net.match && !netLive())) return;
   const dir = playerAimDir(new V3());
   if (net.role === 'guest') {
-    net.act.t++; net.act.dir = [r2(dir.x), r2(dir.y), r2(dir.z), r2(speed)];
+    net.act.t++; net.act.dir = [r2(dir.x), r2(dir.y), r2(dir.z), r2(speed), r2(spin), DISC_KINDS.indexOf(kind)];
+    if (kind !== 'normal') player.cd[kind] = SPECIAL_CD[kind];
+    player.armed = null;
     net.throwAt = performance.now(); net.lastSend = 0;
     player.throwAnim = THROW_ANIM;
     // Show the throw now; the host's copy takes over when it arrives (usually within a few frames).
     const d = player.disc;
     handPos(player, d.pos);
-    d.vel.copy(dir).multiplyScalar(speed);
+    d.vel.copy(dir).multiplyScalar(speed * (kind === 'heavy' ? HEAVY_SPEED : 1));
+    d.kind = kind; d.spin = spin;
     d.state = 'flying'; d.life = 0;
     const arr = d.trail.geometry.attributes.position.array;
     for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
     net.predUntil = performance.now() + 700;
     sfx('throw', d.pos);
-  } else throwDisc(player, dir, speed);
+  } else throwDisc(player, dir, speed, kind, spin);
 }
 
 // aim preview line
@@ -1370,7 +1499,7 @@ function updateViewmodel(dt, active) {
   vmRig.position.copy(vmState.pos);
   vmRig.rotation.set(vmState.rx, 0, vmState.rz);
   vmDisc.visible = held;
-  vmDisc.scale.setScalar(0.3 + 0.08 * k);
+  vmDisc.scale.setScalar((0.3 + 0.08 * k) * (p.armed === 'heavy' ? 1.15 : 1));
   const so = p.blockT > 0 ? 0.25 + 0.3 * (p.blockT / BLOCK_T) : 0;
   vmShield.visible = so > 0;
   vmShieldMat.opacity = so;
@@ -1395,8 +1524,8 @@ function updateCamera(dt) {
     } else {
       cam.pos.set(p.pos.x, p.pos.y + 2.2 - 0.7 * m.tilt, p.pos.z).addScaledVector(cam.dir, -5.2).addScaledVector(rightOf(p, tmp), 1.25);
     }
-    cam.pos.x = clamp(cam.pos.x, -HALF + 0.3, HALF - 0.3);
-    cam.pos.z = clamp(cam.pos.z, -HALF + 0.3, HALF - 0.3);
+    cam.pos.x = clamp(cam.pos.x, -HALF_X + 0.3, HALF_X - 0.3);
+    cam.pos.z = clamp(cam.pos.z, -HALF_Z + 0.3, HALF_Z - 0.3);
     cam.pos.y = clamp(cam.pos.y, 0.3, CEIL - 0.3);
     camera.position.copy(cam.pos);
     if (state.shake > 0 && !reducedMotion) {
@@ -1429,11 +1558,14 @@ function resetFighter(f, z, yaw) {
   f.dmg = f.hits = f.throws = f.banks = f.reflects = 0;
   cancelCharge(f);
   f.throwAnim = f.slideT = f.slideCd = f.wallJumpCd = 0; f.airDash = f.dashAir = false;
+  f.cd.heavy = f.cd.split = 0; f.armed = null; f.yawRate = 0; f.lastYaw = yaw;
+  f.disc.kind = 'normal'; f.disc.spin = 0;
+  shards.length = 0;
   f.disc.state = 'held';
   aiInit(f);
 }
-resetFighter(player, 7, 0);
-resetFighter(cpu, -7, Math.PI);
+resetFighter(player, 10, 0);
+resetFighter(cpu, -10, Math.PI);
 
 const $ = id => document.getElementById(id);
 const ui = {
@@ -1466,8 +1598,8 @@ function startRound() {
   audio();
   for (const f of floats) f.el.remove();
   floats.length = 0;
-  resetFighter(player, 7, 0);
-  resetFighter(cpu, -7, Math.PI);
+  resetFighter(player, 10, 0);
+  resetFighter(cpu, -10, Math.PI);
   state.time = ROUND; state.mode = 'playing'; state.hurt = 0;
   ui.diffLabel.textContent = state.diff + ' CPU';
   show('playing');
@@ -1484,7 +1616,7 @@ function pause() {
 function resume() { state.mode = 'playing'; show('playing'); lock(); }
 function toMenu() {
   state.mode = 'menu'; show('menu'); unlock();
-  resetFighter(player, 7, 0); resetFighter(cpu, -7, Math.PI);
+  resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI);
 }
 function endRound() {
   cancelCharge(player);
@@ -1527,6 +1659,12 @@ function updateHUD(dt) {
   ui.dash.style.width = (100 * (1 - player.dashCd / DASH_CD)) + '%';
   ui.shield.style.width = (ds === 'held' ? 100 * (1 - player.blockCd / BLOCK_CD) : 0) + '%';
   ui.shield.classList.toggle('off', ds !== 'held');
+  for (const k of ['heavy', 'split']) {
+    $(k + 'Bar').style.width = (100 * (1 - player.cd[k] / SPECIAL_CD[k])) + '%';
+    $(k + 'Bar').classList.toggle('off', player.cd[k] > 0);
+    $(k + 'Meter').classList.toggle('armed', player.armed === k);
+    setText($(k + 'Label'), k + 'L', (k === 'heavy' ? 'HEAVY · ' : 'SPLIT · ') + keyName(settings.binds[k]) + (player.armed === k ? ' · ARMED' : ''));
+  }
 }
 
 // ---------- Events ----------
@@ -1557,6 +1695,8 @@ addEventListener('keydown', e => {
   if (e.code === b.dash) tryDash(player);
   if (e.code === b.shield) tryBlock(player);
   if (e.code === b.slide) trySlide(player);
+  if (e.code === b.heavy) toggleArm(player, 'heavy');
+  if (e.code === b.split) toggleArm(player, 'split');
   if (e.code === b.view) {
     fpsView = !fpsView;
     try { localStorage.setItem('discduel.view', fpsView ? 'fps' : 'third'); } catch (err) { /* storage unavailable */ }
@@ -1822,7 +1962,7 @@ function packF(f) {
     r2(chargeFrac(f)), r2(f.slideT), r2(f.throwAnim)];
 }
 function packD(d) {
-  return [DISC_STATES.indexOf(d.state), r2(d.pos.x), r2(d.pos.y), r2(d.pos.z), r2(d.vel.x), r2(d.vel.y), r2(d.vel.z)];
+  return [DISC_STATES.indexOf(d.state), r2(d.pos.x), r2(d.pos.y), r2(d.pos.z), r2(d.vel.x), r2(d.vel.y), r2(d.vel.z), DISC_KINDS.indexOf(d.kind)];
 }
 function netSend(now) {
   if (!net.match || now - net.lastSend < 33) return;
@@ -1831,7 +1971,8 @@ function netSend(now) {
     ? { k: 'h', gp: net.oppPeer, ph: net.phase, ct: r2(net.countT), tm: r2(state.time), f: packF(player),
         d: [packD(player.disc), packD(cpu.disc)],
         sc: [player.dmg, player.hits, player.throws, player.banks, player.reflects, cpu.dmg, cpu.hits, cpu.throws, cpu.banks, cpu.reflects],
-        gh: net.gh, fx: net.fx }
+        gh: net.gh, fx: net.fx,
+        sh: shards.slice(0, 4).map(sh => [r2(sh.pos.x), r2(sh.pos.y), r2(sh.pos.z), r2(sh.vel.x), r2(sh.vel.y), r2(sh.vel.z), sh.owner === player ? 0 : 1]) }
     : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
   p.ts = r3(now / 1000);
   net.match.presence(p).catch(() => {});
@@ -1924,8 +2065,8 @@ function beginOnlineRound() {
   audio();
   for (const f of floats) f.el.remove();
   floats.length = 0;
-  if (net.role === 'host') { resetFighter(player, 7, 0); resetFighter(cpu, -7, Math.PI); }
-  else { resetFighter(player, -7, Math.PI); resetFighter(cpu, 7, 0); }
+  if (net.role === 'host') { resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI); }
+  else { resetFighter(player, -10, Math.PI); resetFighter(cpu, 10, 0); }
   state.time = ROUND; state.hurt = 0; state.mode = 'playing';
   ui.diffLabel.textContent = 'Online · ' + net.code;
   $('cpuTag').textContent = 'RIVAL';
@@ -1944,7 +2085,7 @@ function hostActions() {
   if (num(a[0]) > net.actSeen.t) {
     net.actSeen.t = num(a[0]);
     const dir = new V3(num(a[2]), num(a[3]), num(a[4]));
-    if (cpu.disc.state === 'held' && dir.lengthSq() > 0.01) throwDisc(cpu, dir, num(a[5]) || DISC_SPEED);
+    if (cpu.disc.state === 'held' && dir.lengthSq() > 0.01) throwDisc(cpu, dir, num(a[5]) || DISC_SPEED, DISC_KINDS[num(a[7])] || 'normal', clamp(num(a[6]), -CURVE_MAX, CURVE_MAX));
   }
   if (num(a[1]) > net.actSeen.r) {
     net.actSeen.r = num(a[1]);
@@ -1986,16 +2127,16 @@ function sampleSnaps(out, f) {
 }
 function remoteFighter(f, pk, age, dt) {
   if (Array.isArray(pk) && pk.length >= 11) {
-    const lim = HALF - PLAYER_R;
+    const limX = HALF_X - PLAYER_R, limZ = HALF_Z - PLAYER_R;
     f.vel.set(num(pk[3]), num(pk[4]), num(pk[5]));
     if (net.role === 'guest' && sampleSnaps(tmp, f)) {
-      tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
+      tmp.x = clamp(tmp.x, -limX, limX); tmp.z = clamp(tmp.z, -limZ, limZ);
       f.pos.copy(tmp);
     } else {
       // Host view of the guest: the host decides hits, so stay close to the newest position.
       // Move on the reported velocity, then ease out the remaining error.
       tmp.set(num(pk[0]) + num(pk[3]) * age, Math.max(0, num(pk[1]) + num(pk[4]) * age), num(pk[2]) + num(pk[5]) * age);
-      tmp.x = clamp(tmp.x, -lim, lim); tmp.z = clamp(tmp.z, -lim, lim);
+      tmp.x = clamp(tmp.x, -limX, limX); tmp.z = clamp(tmp.z, -limZ, limZ);
       if (f.pos.distanceTo(tmp) > 3) f.pos.copy(tmp);
       else { f.pos.addScaledVector(f.vel, dt); f.pos.lerp(tmp, 1 - Math.exp(-10 * dt)); f.pos.y = Math.max(0, f.pos.y); }
       const dy = ((num(pk[6]) - f.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
@@ -2014,6 +2155,7 @@ function remoteFighter(f, pk, age, dt) {
 }
 // The guest's own throw flies right away on their screen until the host's copy shows up.
 function predictDisc(d, dt) {
+  if (d.spin) { curveVel(d.vel, d.spin * dt); d.spin *= Math.exp(-0.5 * dt); }
   d.pos.addScaledVector(d.vel, dt);
   for (const a of AXES) {
     if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); }
@@ -2043,6 +2185,7 @@ function remoteDisc(d, pk, age, dt) {
   } else if (d.pos.distanceTo(tmp) > 3) d.pos.copy(tmp);
   else d.pos.lerp(tmp, 1 - Math.exp(-30 * dt));
   d.vel.set(num(pk[4]), num(pk[5]), num(pk[6]));
+  d.kind = DISC_KINDS[num(pk[7])] || 'normal';
   d.state = st; d.life += dt;
   discVisual(d, dt);
 }
@@ -2114,10 +2257,12 @@ function netStep(dt) {
     physics(player, dt);
     remoteFighter(cpu, net.opp && net.opp.f, age, dt);
     cpu.invuln = Math.max(0, cpu.invuln - dt);
+    cpu.cd.heavy = Math.max(0, cpu.cd.heavy - dt); cpu.cd.split = Math.max(0, cpu.cd.split - dt);
     if (live) {
       hostActions();
       updateDisc(player.disc, dt);
       updateDisc(cpu.disc, dt);
+      updateShards(dt);
       discClash(dt);
       state.time -= dt;
       if (state.time <= 0) { state.time = 0; net.phase = 'over'; net.lastSend = 0; endRound(); }
@@ -2130,6 +2275,10 @@ function netStep(dt) {
     physics(player, dt);
     remoteFighter(cpu, h && h.f, age, dt);
     if (h) applyHostState(h, age, dt);
+    drawShards(h && Array.isArray(h.sh) && h.sh.length && h.ph === 'play' ? h.sh.map(e => {
+      const q = [0, 1, 2].map(j => foldAxis(num(e[j]) + num(e[3 + j]) * age, BMIN.getComponent(j), BMAX.getComponent(j)));
+      return [q[0], q[1], q[2], num(e[6]) === 1 ? 'p' : 'c'];
+    }) : []);
     showBanner(h && h.ph === 'count' ? num(h.ct) : -1);
   }
   separateLocal();
@@ -2155,15 +2304,15 @@ function simFighter(z, yaw) {
   };
 }
 function exhibitReset(m) {
-  m.f = [simFighter(7, 0), simFighter(-7, Math.PI)];
+  m.f = [simFighter(10, 0), simFighter(-10, Math.PI)];
   m.f[0].disc.target = 1; m.f[1].disc.target = 0; m.f[1].disc.credit = 1;
   m.clock = ROUND;
 }
 function makeExhibit(slot, cols) {
   const g = new THREE.Group();
-  g.position.set(slot[0] * GAP_X, slot[1] * GAP_Y, slot[2] * GAP_X);
+  g.position.set(slot[0] * GAP_X, slot[1] * GAP_Y, slot[2] * GAP_Z);
   scene.add(g);
-  const live = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA - 0.06, CEIL - 0.06, ARENA - 0.06)),
+  const live = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X - 0.06, CEIL - 0.06, ARENA_Z - 0.06)),
     new THREE.LineBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: 0.75 }));
   live.position.y = CEIL / 2;
   g.add(live);
@@ -2232,10 +2381,10 @@ function exFighter(m, f, o, dt, live) {
   if (live) {
     f.strafeT -= dt;
     if (f.strafeT <= 0) { f.strafe *= -1; f.strafeT = rand(0.7, 2.4); f.prefDist = rand(7, 13); }
-    const tx = dx / dist, tz = dz / dist, radial = clamp((dist - f.prefDist) / 4, -1, 1), lim = HALF - 3;
+    const tx = dx / dist, tz = dz / dist, radial = clamp((dist - f.prefDist) / 4, -1, 1), lx = HALF_X - 3, lz = HALF_Z - 3;
     let wx = -tz * f.strafe * 0.85 + tx * radial, wz = tx * f.strafe * 0.85 + tz * radial;
-    wx += Math.max(0, -lim - f.pos.x) - Math.max(0, f.pos.x - lim);
-    wz += Math.max(0, -lim - f.pos.z) - Math.max(0, f.pos.z - lim);
+    wx += Math.max(0, -lx - f.pos.x) - Math.max(0, f.pos.x - lx);
+    wz += Math.max(0, -lz - f.pos.z) - Math.max(0, f.pos.z - lz);
     const wl = Math.hypot(wx, wz);
     if (wl > 0.15) f.wish.set(wx / wl * MOVE * 0.85, 0, wz / wl * MOVE * 0.85);
     // Dodge or shield the other disc when it is about to arrive.
@@ -2267,8 +2416,7 @@ function exFighter(m, f, o, dt, live) {
   f.vel.y -= GRAV * dt;
   f.pos.addScaledVector(f.vel, dt);
   if (f.pos.y <= 0) { f.pos.y = 0; f.vel.y = Math.max(0, f.vel.y); f.onGround = true; } else f.onGround = false;
-  const lim = HALF - PLAYER_R;
-  f.pos.x = clamp(f.pos.x, -lim, lim); f.pos.z = clamp(f.pos.z, -lim, lim);
+  f.pos.x = clamp(f.pos.x, -(HALF_X - PLAYER_R), HALF_X - PLAYER_R); f.pos.z = clamp(f.pos.z, -(HALF_Z - PLAYER_R), HALF_Z - PLAYER_R);
   f.throwAnim = Math.max(0, f.throwAnim - dt);
   f.dashCd = Math.max(0, f.dashCd - dt);
   f.blockT = Math.max(0, f.blockT - dt); f.blockCd = Math.max(0, f.blockCd - dt);
@@ -2422,6 +2570,7 @@ function step(dt, attract) {
   separate();
   updateDisc(player.disc, dt);
   updateDisc(cpu.disc, dt);
+  updateShards(dt);
   discClash(dt);
 }
 let last = performance.now();
@@ -2454,6 +2603,8 @@ function tick(now, render) {
   updateRings(state.mode === 'paused' ? 0 : dt);
   updateFloats(state.mode === 'paused' ? 0 : dt);
   stadiumUpdate(dt);
+  // The guest draws shards from the host's snapshot inside netStep; everyone else from the local sim.
+  if (net.role !== 'guest') drawShards(state.mode === 'playing' || state.mode === 'paused' || state.mode === 'menu' || state.mode === 'results' ? localShardList() : []);
   updateHUD(dt);
   if (composer && settings.bloom) composer.render(); else renderer.render(scene, camera);
 }

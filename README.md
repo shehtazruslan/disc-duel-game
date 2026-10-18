@@ -1,6 +1,6 @@
 # Disc Duel
 
-A 1v1 disc-throwing duel in a compact neon arena. Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the two-minute clock runs out.
+A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the two-minute clock runs out.
 
 **Play:** open `index.html` in a browser, or visit the GitHub Pages site for this repository.
 
@@ -19,14 +19,23 @@ Default keys; every key can be changed in **Settings & controls**.
 | --- | --- |
 | Mouse | Aim (click the arena to capture the cursor). The crosshair turns orange on your opponent |
 | Hold left click | Wind up, release to throw. A tap throws at 30 m/s, a full 0.8 s wind-up at 46 m/s |
+| Flick the mouse as you release | Curves the throw that way; most of the spin is lost at the first wall |
 | Left click (disc in flight) | Recall the disc |
 | Right click / Q | Shield, reflects a disc back at its thrower (disc must be in hand) |
 | W A S D | Move |
 | Space | Jump; in the air next to a wall, wall jump |
 | Left Shift | Dash; once more in the air, holding your height |
 | C | Slide, ducking under high discs |
+| E / R | Arm a Heavy / Split disc for your next throw |
 | V | Switch between first person (default) and over-the-shoulder view |
 | M / Esc | Mute / Pause |
+
+## Special discs
+
+Each recharges for 7 s after use.
+
+- **Heavy (E):** about 28% slower and much bigger, +10 damage, and a shield can't reflect it.
+- **Split (R):** at its first wall bounce it throws off two shards that live about 1.3 s and hit for 8 each.
 
 ## Settings
 
