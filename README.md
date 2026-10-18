@@ -13,13 +13,18 @@ A 1v1 disc-throwing duel in a compact neon arena. Discs ricochet off every wall,
 
 | Input | Action |
 | --- | --- |
-| Mouse | Aim (click the arena to capture the cursor) |
-| Left click | Throw disc, click again to recall it |
+| Mouse | Aim (click the arena to capture the cursor). The crosshair turns orange on your opponent |
+| Hold left click | Wind up, release to throw. A tap throws at 30 m/s, a full 0.8 s wind-up at 46 m/s |
+| Left click (disc in flight) | Recall the disc |
 | Right click / Q | Shield, reflects a disc back at its thrower (disc must be in hand) |
 | W A S D | Move |
-| Space / Shift | Jump / Dash |
+| Space | Jump; in the air next to a wall, wall jump |
+| Shift | Dash; once more in the air, holding your height |
+| C | Slide, ducking under high discs |
 | Esc / M | Pause / Mute |
+
+Mouse sensitivity is on the menu and pause screens.
 
 ## Scoring
 
-Direct hit 12 · each bank +8 · reflect +10 · recall hit 10.
+Direct hit 12 · each bank +8 · reflect +10 · recall hit 10 · a full wind-up adds up to +10.
