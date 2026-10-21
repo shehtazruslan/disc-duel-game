@@ -1,12 +1,19 @@
 # Disc Duel
 
-A 1v1 disc-throwing duel in a neon arena (22 × 32 m, 9 m walls). Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the 90-second clock runs out.
+A 1v1 disc-throwing duel in a neon arena with 9 m glass walls. Discs ricochet off every wall, floor and ceiling; each bounce before a hit adds damage. Nobody has a health bar: deal more damage than your opponent before the 90-second clock runs out.
 
 **Play:** open `index.html` in a browser, or visit the GitHub Pages site for this repository.
 
+## Maps
+
+Pick the map on the menu. Online, the host's map is used.
+
+- **Classic:** a 22 × 32 m rectangle.
+- **Plus:** a plus-shaped arena, 14 m wide arms and 36 m tip to tip. Discs can't pass the glass corners, so they're cover; bank shots (and the CPU) reach around them.
+
 ## Modes
 
-- **vs CPU** with Easy, Normal and Hard difficulty. Both fighters take the difficulty's build: wide on Easy, slimmer on Normal, a slim human on Hard, with a hitbox that matches (smaller on harder levels). Online matches use the Hard build.
+- **vs CPU** with Easy, Normal and Hard difficulty. Both fighters take the difficulty's build: broad on Easy, athletic on Normal, tall and slim on Hard, with a hitbox that matches (smaller on harder levels). Online matches use the Hard build.
 - **Online 1v1.** One player clicks *Create match* and sends the 4-character code; the other clicks *Join*. Browsers connect directly with WebRTC via [PeerJS](https://peerjs.com/). Some strict networks (work, school, mobile) block direct connections.
 
 The glass walls look out on a stadium of other arenas. On the GitHub Pages site, other players' live matches (online or vs CPU) appear in the neighbouring cubes; cubes without a real match run CPU exhibitions. Add `?stadium=0` to the URL to turn the exhibitions off.
@@ -49,7 +56,8 @@ Each recharges for 7 s after use.
 
 - **Mouse sensitivity** as a multiplier or in cm/360° (enter your mouse DPI). The game asks for raw mouse input, so cm/360° is exact in Chrome and Edge.
 - **Field of view** (horizontal, first person) and **effects volume**.
-- **Graphics:** neon glow on/off, matches in the neighboring arenas on/off, and a Fast resolution for slower computers.
+- **Graphics:** neon glow on/off, floor reflections on/off, matches in the neighboring arenas on/off, and a Fast resolution for slower computers (it also drops the fighters' shadows).
+- **Show frame rate:** frames per second, frame times and, where the browser allows it, how long the graphics card takes per frame.
 
 ## Sound
 

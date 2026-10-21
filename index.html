@@ -203,6 +203,8 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .res-note { margin: 0; font-size: 13px; color: var(--cpu); min-height: 1em; }
 .res-note:empty { display: none; }
+.maps { grid-template-columns: repeat(2, 1fr); }
+.maps button[aria-checked="true"] { background: var(--you); }
 .board-tabs { grid-template-columns: repeat(4, 1fr); }
 .board-tabs button[aria-selected="true"] { background: var(--you); color: var(--void); }
 .scope-row { display: flex; gap: 18px; }
@@ -218,6 +220,10 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 .board-table td.name { white-space: normal; overflow-wrap: anywhere; }
 .board-table .empty { color: var(--dim); text-align: center; padding: 18px 8px; white-space: normal; }
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13px; font-variant-numeric: tabular-nums; }
+#fps {
+  position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  font: 600 11px var(--font-mono); letter-spacing: 0.06em; color: var(--dim); font-variant-numeric: tabular-nums; pointer-events: none;
+}
 .stats .h { font-size: 10px; letter-spacing: 0.2em; color: var(--dim); }
 .stats .y { color: var(--you); text-align: right; }
 .stats .c { color: var(--cpu); text-align: right; }
@@ -256,10 +262,15 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
 <section class="overlay" id="menu">
   <div class="panel">
-    <p class="eyebrow">1v1 · 22 × 32 m arena · 9 m walls · discs ricochet</p>
+    <p class="eyebrow" id="menuEyebrow">1v1 · 22 × 32 m arena · 9 m walls · discs ricochet</p>
     <h1>Disc Duel</h1>
     <p class="lede">Nobody runs out of health. Deal more damage than the CPU before the 90-second clock runs out. Every wall your disc bounces off before it lands adds damage.</p>
     <label class="name-field" for="playerName">Your name <input id="playerName" maxlength="16" placeholder="Player" autocomplete="nickname" spellcheck="false"></label>
+    <div class="diff maps" role="radiogroup" aria-label="Map">
+      <button type="button" role="radio" id="map-classic" data-map="classic" aria-checked="true">Classic</button>
+      <button type="button" role="radio" id="map-plus" data-map="plus" aria-checked="false">Plus</button>
+    </div>
+    <p class="hint" id="mapNote" hidden></p>
     <div class="diff" role="radiogroup" aria-label="CPU difficulty">
       <button type="button" role="radio" id="diff-easy" data-diff="easy" aria-checked="false">Easy</button>
       <button type="button" role="radio" id="diff-normal" data-diff="normal" aria-checked="true">Normal</button>
@@ -337,9 +348,12 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     <div class="set-group">
       <h3>Graphics</h3>
       <label class="check" for="setBloom"><input type="checkbox" id="setBloom"> Neon glow</label>
+      <label class="check" for="setMirror"><input type="checkbox" id="setMirror"> Floor reflections</label>
       <label class="check" for="setStadium"><input type="checkbox" id="setStadium"> Matches in the neighboring arenas</label>
       <label class="slider" for="setQuality">Resolution <select id="setQuality"><option value="high">Sharp</option><option value="low">Fast</option></select></label>
-      <p class="sens-note">Turning off the glow and the neighboring matches, or choosing Fast, helps on slower computers.</p>
+      <p class="sens-note">Turning off the glow, the floor reflections and the neighboring matches, or choosing Fast (which also drops shadows), helps on slower computers.</p>
+      <label class="check" for="setFps"><input type="checkbox" id="setFps"> Show frame rate</label>
+      <p class="sens-note">Bottom right: frames per second, average and worst frame time, and (where the browser allows) how long your graphics card takes to draw each frame.</p>
     </div>
     <div class="set-group">
       <h3>Controls</h3>
@@ -391,10 +405,12 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
     <div class="btns">
       <button type="button" class="go" id="rematchBtn">Rematch</button>
       <button type="button" class="ghost" id="resBoardBtn">Leaderboard</button>
-      <button type="button" class="ghost" id="menuBtn">Change difficulty</button>
+      <button type="button" class="ghost" id="menuBtn">Change map or difficulty</button>
     </div>
   </div>
 </section>
+
+<div id="fps" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
@@ -403,6 +419,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/Reflector.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 (() => {
@@ -410,9 +427,9 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 const V3 = THREE.Vector3;
 
 // ---------- Tuning ----------
-// Low-ceilinged rectangle: 22 m wide (x), 32 m long (z, the axis the players face each other on), 9 m walls.
-const ARENA_X = 22, ARENA_Z = 32, HALF_X = ARENA_X / 2, HALF_Z = ARENA_Z / 2, CEIL = 9;
-const HALF_OF = { x: HALF_X, z: HALF_Z };
+// Every arena has 9 m walls. The classic one is a 22 × 32 m rectangle (z is the axis the players face each other on);
+// the neighbouring arenas in the stadium are drawn at that size. Other layouts are in "Maps" below.
+const ARENA_X = 22, ARENA_Z = 32, CEIL = 9;
 const DISC_R = 0.45, DISC_SPEED = 30, RETURN_SPEED = 34, MAX_BOUNCES = 3;
 // Hold to wind up: a tap throws at DISC_SPEED, a full CHARGE_T hold at CHARGE_SPEED; you move slower meanwhile.
 const CHARGE_SPEED = 46, CHARGE_T = 0.8, CHARGE_MOVE = 0.55, THROW_ANIM = 0.22;
@@ -436,8 +453,6 @@ const DIFF = {
 };
 const COL_YOU = 0x3ff0ff, COL_CPU = 0xff8a2a;
 const AXES = ['x', 'y', 'z'];
-const BMIN = new V3(-HALF_X + DISC_R, DISC_R, -HALF_Z + DISC_R);
-const BMAX = new V3(HALF_X - DISC_R, CEIL - DISC_R, HALF_Z - DISC_R);
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -445,6 +460,166 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.4;
 const tmp = new V3(), tmp2 = new V3(), tmp3 = new V3();
 const r2 = v => Math.round(v * 100) / 100;
+
+// ---------- Maps ----------
+// A map is a floor outline inside a bounding box (hx, hz are its half sizes); the rest of the box is solid,
+// full-height blocks, each [x0, x1, z0, z1]. Every wall is axis-aligned, so a disc bounces off a block face
+// exactly as it does off an outer wall. All walls are glass: blocks stop discs, not your view.
+const PLUS_ARM = 7, PLUS_END = 18;
+const MAPS = {
+  classic: {
+    name: 'Classic', hx: ARENA_X / 2, hz: ARENA_Z / 2, spawn: 10, orbit: 9.5, blocks: [],
+    outline: [[-11, -16], [11, -16], [11, 16], [-11, 16]],
+    eyebrow: '1v1 · 22 × 32 m arena · 9 m walls · discs ricochet', note: '',
+  },
+  // 14 m wide arms, 36 m tip to tip. The corners are cover from discs; bank shots reach around them.
+  plus: {
+    name: 'Plus', hx: PLUS_END, hz: PLUS_END, spawn: 11, orbit: 8.5,
+    blocks: [[PLUS_ARM, PLUS_END, PLUS_ARM, PLUS_END], [-PLUS_END, -PLUS_ARM, PLUS_ARM, PLUS_END],
+      [PLUS_ARM, PLUS_END, -PLUS_END, -PLUS_ARM], [-PLUS_END, -PLUS_ARM, -PLUS_END, -PLUS_ARM]],
+    outline: [[-PLUS_ARM, -PLUS_END], [PLUS_ARM, -PLUS_END], [PLUS_ARM, -PLUS_ARM], [PLUS_END, -PLUS_ARM], [PLUS_END, PLUS_ARM], [PLUS_ARM, PLUS_ARM],
+      [PLUS_ARM, PLUS_END], [-PLUS_ARM, PLUS_END], [-PLUS_ARM, PLUS_ARM], [-PLUS_END, PLUS_ARM], [-PLUS_END, -PLUS_ARM], [-PLUS_ARM, -PLUS_ARM]],
+    eyebrow: '1v1 · plus-shaped arena, 36 m across · 9 m walls', note: 'Discs can\'t pass the glass corners. Bank shots reach around them.',
+  },
+};
+// Map names arrive from other players too: only our own keys count (never 'constructor' and the like).
+const isMap = k => typeof k === 'string' && Object.prototype.hasOwnProperty.call(MAPS, k);
+const inBlock = (b, x, z, pad) => x > b[0] - pad && x < b[1] + pad && z > b[2] - pad && z < b[3] + pad;
+const insideMap = (g, x, z, pad) => Math.abs(x) < g.hx - pad && Math.abs(z) < g.hz - pad && !g.blocks.some(b => inBlock(b, x, z, pad));
+// The space a disc's centre can reach (walls pulled in by its radius), and the walls it can bank off.
+function makeGeo(key) {
+  const m = MAPS[key];
+  const g = { key, hx: m.hx, hz: m.hz, blocks: m.blocks,
+    min: new V3(-m.hx + DISC_R, DISC_R, -m.hz + DISC_R), max: new V3(m.hx - DISC_R, CEIL - DISC_R, m.hz - DISC_R), planes: [] };
+  for (const a of AXES) g.planes.push([a, g.min[a]], [a, g.max[a]]);
+  // Block faces that face into the arena (the others lie on the bounding box). Face f of [x0, x1, z0, z1] is b[f].
+  for (const b of m.blocks) for (let f = 0; f < 4; f++) {
+    const half = f < 2 ? m.hx : m.hz, n = f % 2 ? 1 : -1;
+    if (Math.abs(b[f]) < half) g.planes.push([f < 2 ? 'x' : 'z', b[f] + n * DISC_R]);
+  }
+  return g;
+}
+const GEOS = {};
+for (const k in MAPS) GEOS[k] = makeGeo(k);
+// The map being played. Only setMap changes it.
+let mapKey = 'classic', G = GEOS.classic;
+
+// Which face of block b (grown by pad) a point now at (x, z) went through, coming from (px, pz): 0 / 1 are its
+// low / high x faces, 2 / 3 its low / high z faces. Across a corner it's the face crossed last; a point that
+// was already inside leaves by the nearest face.
+function blockFace(b, pad, px, pz, x, z) {
+  const x0 = b[0] - pad, x1 = b[1] + pad, z0 = b[2] - pad, z1 = b[3] + pad;
+  const outX = px <= x0 || px >= x1, outZ = pz <= z0 || pz >= z1;
+  let useX;
+  if (outX !== outZ) useX = outX;
+  else if (outX) useX = (px <= x0 ? (x0 - px) / (x - px) : (px - x1) / (px - x)) > (pz <= z0 ? (z0 - pz) / (z - pz) : (pz - z1) / (pz - z));
+  else useX = Math.min(x - x0, x1 - x) < Math.min(z - z0, z1 - z);
+  if (useX) return (outX ? px : x) < (x0 + x1) / 2 ? 0 : 1;
+  return (outZ ? pz : z) < (z0 + z1) / 2 ? 2 : 3;
+}
+// A ball (disc or shard) at p moved there from (px, pz): mirror it off every wall it went through.
+// onHit(ctx, axis, wall, n) gets each wall's surface coordinate and the way it faces (+1 / -1), for effects.
+function bounceBall(g, p, v, px, pz, onHit, ctx) {
+  for (const a of AXES) {
+    if (p[a] > g.max[a]) { p[a] = 2 * g.max[a] - p[a]; v[a] = -Math.abs(v[a]); if (onHit) onHit(ctx, a, g.max[a] + DISC_R, -1); }
+    else if (p[a] < g.min[a]) { p[a] = 2 * g.min[a] - p[a]; v[a] = Math.abs(v[a]); if (onHit) onHit(ctx, a, g.min[a] - DISC_R, 1); }
+  }
+  for (const b of g.blocks) {
+    if (!inBlock(b, p.x, p.z, DISC_R)) continue;
+    const f = blockFace(b, DISC_R, px, pz, p.x, p.z), a = f < 2 ? 'x' : 'z', n = f % 2 ? 1 : -1;
+    p[a] = 2 * (b[f] + n * DISC_R) - p[a]; v[a] = n * Math.abs(v[a]);
+    if (onHit) onHit(ctx, a, b[f], n);
+  }
+}
+// Where a ball at p moving at v is t seconds later, bouncing on the way (p and v are updated).
+function extrapolate(g, p, v, t) {
+  t = Math.min(t, 1.5);
+  const steps = Math.min(300, Math.max(1, Math.ceil(v.length() * Math.abs(t) / 0.25))), h = t / steps;
+  for (let i = 0; i < steps; i++) { const px = p.x, pz = p.z; p.addScaledVector(v, h); bounceBall(g, p, v, px, pz, null); }
+  return p;
+}
+// Push a point that came from (px, pz) at least pad clear of every block. Returns the face it was pushed out of, or -1.
+function pushOut(g, p, pad, px, pz) {
+  let hit = -1;
+  for (const b of g.blocks) {
+    if (!inBlock(b, p.x, p.z, pad)) continue;
+    hit = blockFace(b, pad, px, pz, p.x, p.z);
+    p[hit < 2 ? 'x' : 'z'] = b[hit] + (hit % 2 ? pad : -pad);
+  }
+  return hit;
+}
+// Where a ray from o along unit d first enters block b (grown by pad), or Infinity. Blocks are full height, so only
+// x and z matter. entryAxis / entryN say which face it hits (its axis, and the way it faces).
+let entryAxis = 'x', entryN = 1;
+function blockEntry(b, pad, o, d) {
+  let tin = -Infinity, tout = Infinity;
+  for (let i = 0; i < 2; i++) {
+    const a = i ? 'z' : 'x', lo = b[i * 2] - pad, hi = b[i * 2 + 1] + pad;
+    if (Math.abs(d[a]) < 1e-9) { if (o[a] <= lo || o[a] >= hi) return Infinity; continue; }
+    const t0 = ((d[a] > 0 ? lo : hi) - o[a]) / d[a], t1 = ((d[a] > 0 ? hi : lo) - o[a]) / d[a];
+    if (t0 > tin) { tin = t0; entryAxis = a; entryN = d[a] > 0 ? -1 : 1; }
+    if (t1 < tout) tout = t1;
+  }
+  return tin < tout && tin >= 0 ? tin : Infinity;
+}
+// Distance from o (inside the map) along unit d to the first wall, every surface pulled in by pad.
+// rayAxis / rayN say which wall it was.
+let rayAxis = 'x', rayN = 1;
+function rayHit(g, o, d, pad) {
+  let t = Infinity;
+  for (const a of AXES) {
+    const hi = a === 'y' ? CEIL - pad : (a === 'x' ? g.hx : g.hz) - pad, lo = a === 'y' ? pad : -hi;
+    let s = Infinity, n = 0;
+    if (d[a] > 1e-6) { s = (hi - o[a]) / d[a]; n = -1; } else if (d[a] < -1e-6) { s = (lo - o[a]) / d[a]; n = 1; }
+    if (s < t) { t = s; rayAxis = a; rayN = n; }
+  }
+  for (const b of g.blocks) {
+    const s = blockEntry(b, pad, o, d);
+    if (s < t) { t = s; rayAxis = entryAxis; rayN = entryN; }
+  }
+  return Math.max(0, t);
+}
+// True when no block stands between a and b (the outer walls never come between two points inside).
+const losDir = new V3();
+function losClear(g, a, b, pad = 0) {
+  if (!g.blocks.length) return true;
+  const len = losDir.subVectors(b, a).length();
+  if (len < 1e-6) return true;
+  losDir.multiplyScalar(1 / len);
+  for (const bl of g.blocks) if (blockEntry(bl, pad, a, losDir) < len) return false;
+  return true;
+}
+// The wall within `reach` of a fighter at p, if any: wallN is the way it faces, wallAt a point on it at chest height.
+const wallN = new V3(), wallAt = new V3();
+function wallNear(g, p, reach) {
+  let nx = 0, nz = 0;
+  wallAt.set(p.x, p.y + 1, p.z);
+  if (p.x > g.hx - reach) { nx = -1; wallAt.x = g.hx - 0.03; } else if (p.x < reach - g.hx) { nx = 1; wallAt.x = 0.03 - g.hx; }
+  if (p.z > g.hz - reach) { nz = -1; wallAt.z = g.hz - 0.03; } else if (p.z < reach - g.hz) { nz = 1; wallAt.z = 0.03 - g.hz; }
+  for (const b of g.blocks) {
+    if (!inBlock(b, p.x, p.z, reach)) continue;
+    const dx = p.x < b[0] ? b[0] - p.x : p.x > b[1] ? p.x - b[1] : 0;
+    const dz = p.z < b[2] ? b[2] - p.z : p.z > b[3] ? p.z - b[3] : 0;
+    if (dx >= dz) { nx = p.x < b[0] ? -1 : 1; wallAt.x = b[nx < 0 ? 0 : 1] + nx * 0.03; }
+    else { nz = p.z < b[2] ? -1 : 1; wallAt.z = b[nz < 0 ? 2 : 3] + nz * 0.03; }
+  }
+  const l = Math.hypot(nx, nz);
+  if (!l) return false;
+  wallN.set(nx / l, 0, nz / l);
+  return true;
+}
+// The sides of a map's outline: ends, and the way each faces into the arena.
+function mapSides(def) {
+  if (def.sides) return def.sides;
+  const inside = (x, z) => Math.abs(x) < def.hx && Math.abs(z) < def.hz && !def.blocks.some(b => inBlock(b, x, z, 0));
+  def.sides = def.outline.map((a, i) => {
+    const b = def.outline[(i + 1) % def.outline.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let nx = (b[1] - a[1]) / len, nz = -(b[0] - a[0]) / len;
+    if (!inside((a[0] + b[0]) / 2 + nx * 0.1, (a[1] + b[1]) / 2 + nz * 0.1)) { nx = -nx; nz = -nz; }
+    return { ax: a[0], az: a[1], bx: b[0], bz: b[1], nx, nz, len };
+  });
+  return def.sides;
+}
 
 // Online state. Host runs discs, hits, score and clock; each side owns its own fighter's movement.
 const net = {
@@ -458,7 +633,7 @@ const net = {
 // ---------- Settings (saved in this browser) ----------
 const DEFAULT_BINDS = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', dash: 'ShiftLeft', slide: 'KeyC', shield: 'KeyQ', heavy: 'KeyE', split: 'KeyR', view: 'KeyV', mute: 'KeyM' };
 const BIND_LABELS = [['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['dash', 'Dash'], ['slide', 'Slide'], ['shield', 'Shield'], ['heavy', 'Arm Heavy disc'], ['split', 'Arm Split disc'], ['view', 'Switch view'], ['mute', 'Mute']];
-const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', binds: Object.assign({}, DEFAULT_BINDS) };
+const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', fps: false, mirror: true, binds: Object.assign({}, DEFAULT_BINDS) };
 try {
   const saved = JSON.parse(localStorage.getItem('discduel.settings') || 'null');
   if (saved && typeof saved === 'object') {
@@ -466,6 +641,8 @@ try {
     if (+saved.sfx >= 0 && +saved.sfx <= 1) settings.sfx = +saved.sfx;
     if (typeof saved.bloom === 'boolean') settings.bloom = saved.bloom;
     if (typeof saved.stadium === 'boolean') settings.stadium = saved.stadium;
+    if (typeof saved.fps === 'boolean') settings.fps = saved.fps;
+    if (typeof saved.mirror === 'boolean') settings.mirror = saved.mirror;
     if (saved.quality === 'low' || saved.quality === 'high') settings.quality = saved.quality;
     if (saved.binds && typeof saved.binds === 'object') for (const k in DEFAULT_BINDS) if (typeof saved.binds[k] === 'string' && saved.binds[k]) settings.binds[k] = saved.binds[k];
   }
@@ -477,45 +654,99 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setPixelRatio(settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75));
 renderer.setSize(innerWidth, innerHeight);
 document.getElementById('stage').appendChild(renderer.domElement);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x02040a);
 scene.fog = new THREE.Fog(0x02040a, 28, 120);
 const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 200);
+// Layers: 0 is the arena and everything in it. The stadium next door (1) and your first-person arm (2) are seen only
+// by the main camera: the floor's mirror, the reflection capture and the shadows leave them out.
+const LAYER_STADIUM = 1, LAYER_VIEW = 2;
+camera.layers.enable(LAYER_STADIUM); camera.layers.enable(LAYER_VIEW);
 
+// With the glow on, the scene renders into an anti-aliased (multisampled) half-float buffer, so neon brighter than
+// white survives to the last step (FilmShader), which burns it toward white with a coloured halo, the way film does.
+// Without float buffers it falls back to an ordinary one and the neon keeps its plain colours (see hot()).
+const HDR = renderer.capabilities.isWebGL2 && renderer.extensions.has('EXT_color_buffer_float');
+const FilmShader = {
+  uniforms: { tDiffuse: { value: null }, vignette: { value: 0.22 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float vignette; varying vec2 vUv;
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      // The hottest neon loses its colour toward white at the core.
+      float peak = max(c.r, max(c.g, c.b));
+      c = mix(c, vec3(peak), 0.7 * smoothstep(1.0, 3.0, peak));
+      // A soft shoulder: unchanged up to 0.6, then rolling off toward white instead of clipping.
+      vec3 k = vec3(0.6);
+      c = mix(c, k + (1.0 - k) * (1.0 - exp(-(c - k) / (1.0 - k))), step(k, c));
+      vec2 d = vUv - 0.5;
+      gl_FragColor = vec4(c * (1.0 - vignette * dot(d, d) * 1.6), 1.0);
+    }`,
+};
 let composer = null, bloom = null;
 if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
   try {
-    composer = new THREE.EffectComposer(renderer);
+    const pr = renderer.getPixelRatio();
+    const target = renderer.capabilities.isWebGL2
+      ? new THREE.WebGLMultisampleRenderTarget(innerWidth * pr, innerHeight * pr, { format: THREE.RGBAFormat, type: HDR ? THREE.HalfFloatType : THREE.UnsignedByteType })
+      : undefined;
+    composer = new THREE.EffectComposer(renderer, target);
+    composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight);
     composer.addPass(new THREE.RenderPass(scene, camera));
     bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.45, 0.25);
     composer.addPass(bloom);
+    if (HDR) composer.addPass(new THREE.ShaderPass(FilmShader));
   } catch (e) { composer = null; }
 }
+// Neon brighter than white (k times its colour). Only the glow's half-float path can show it; anywhere else it would
+// just clip to white, so the colour is scaled up only while that path is in use.
+const hotMats = new Map();
+const hotOn = () => HDR && !!composer && settings.bloom;
+function hot(mat, k) { hotMats.set(mat, { base: mat.color.clone(), k }); if (hotOn()) mat.color.multiplyScalar(k); return mat; }
+function hotColor(mat, hex) {
+  const e = hotMats.get(mat);
+  if (!e) { mat.color.setHex(hex); return; }
+  e.base.setHex(hex); mat.color.copy(e.base).multiplyScalar(hotOn() ? e.k : 1);
+}
+function applyHot() { const on = hotOn(); for (const [mat, e] of hotMats) mat.color.copy(e.base).multiplyScalar(on ? e.k : 1); }
 
-// Grid cells stay square on every face: floor/ceiling are ARENA_X×ARENA_Z, the long walls ARENA_Z×CEIL, the end walls ARENA_X×CEIL.
 // The fine grid between the big lines. Off: the surfaces read as large glass panes. Set true to bring it back.
 const MINOR_GRID = false;
-// `fill` sets the panel between the lines: solid for the floor, nearly clear for glass.
-function gridTexture(wUnits, hUnits, fill = '#04070e') {
+const CELL = 1.375;
+// `fill` sets the panel between the lines: solid for the floor, nearly clear for glass. Grid cells stay square.
+// `at` places the panel in the world ({ u0, us, v0, vs }: the world coordinate at its left / bottom edge and which way
+// it runs), so lines fall on whole cells from the arena's centre and carry on across neighbouring panels.
+// Without it, lines count from the panel's own edges.
+function gridTexture(wUnits, hUnits, fill = '#04070e', at = null) {
   const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
   g.fillStyle = fill;
   g.fillRect(0, 0, W, H);
-  const cell = 1.375 * ppu;
-  const line = (i, vertical) => {
-    const major = i % 4 === 0;
+  const line = (s, vertical, major) => {
     if (!major && !MINOR_GRID) return;
     g.strokeStyle = major ? '#1d6a94' : '#0e2b42';
     g.lineWidth = major ? 4 : 2;
+    const p = s * ppu;
     g.beginPath();
-    if (vertical) { g.moveTo(i * cell, 0); g.lineTo(i * cell, H); } else { g.moveTo(0, H - i * cell); g.lineTo(W, H - i * cell); }
+    if (vertical) { g.moveTo(p, 0); g.lineTo(p, H); } else { g.moveTo(0, H - p); g.lineTo(W, H - p); }
     g.stroke();
   };
-  for (let i = 1; i * cell < W - 2; i++) line(i, true);
-  for (let i = 1; i * cell < H - 2; i++) line(i, false);
+  const lines = (len, vertical, o0, os) => {
+    if (o0 === undefined) { for (let i = 1; i * CELL < len - 2 / ppu; i++) line(i * CELL, vertical, i % 4 === 0); return; }
+    const lo = Math.min(o0, o0 + os * len), hi = Math.max(o0, o0 + os * len);
+    for (let k = Math.ceil(lo / CELL); k * CELL <= hi; k++) {
+      const s = (k * CELL - o0) * os;
+      if (s > 0.05 && s < len - 0.05) line(s, vertical, k % 4 === 0);
+    }
+  };
+  lines(wUnits, true, at ? at.u0 : undefined, at ? at.us || 1 : 1);
+  lines(hUnits, false, at ? at.v0 : undefined, at ? at.vs || 1 : 1);
   g.strokeStyle = '#2fb6ee';
   g.lineWidth = 12;
   g.strokeRect(6, 6, W - 12, H - 12);
@@ -523,44 +754,168 @@ function gridTexture(wUnits, hUnits, fill = '#04070e') {
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return t;
 }
-const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, side: THREE.BackSide });
+const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, envMapIntensity: 0.8 });
 // Walls and ceiling are glass: neon lines stay bright, the panels between them let you see out.
-const glassMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, side: THREE.BackSide, transparent: true, depthWrite: false });
+const glassMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, envMapIntensity: 0.6, transparent: true, depthWrite: false });
 const GLASS_FILL = 'rgba(6, 14, 26, 0.28)';
-const sideMat = glassMat(gridTexture(ARENA_Z, CEIL, GLASS_FILL)), endMat = glassMat(gridTexture(ARENA_X, CEIL, GLASS_FILL));
-const ceilMat = glassMat(gridTexture(ARENA_X, ARENA_Z, GLASS_FILL));
-const floorMat = roomMat(gridTexture(ARENA_X, ARENA_Z));
-// BoxGeometry face order: +x, -x, +y (ceiling), -y (floor), +z, -z
-const room = new THREE.Mesh(new THREE.BoxGeometry(ARENA_X, CEIL, ARENA_Z), [sideMat, sideMat, ceilMat, floorMat, endMat, endMat]);
-room.position.y = CEIL / 2;
-scene.add(room);
-const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X - 0.02, CEIL - 0.02, ARENA_Z - 0.02)), new THREE.LineBasicMaterial({ color: 0x8fe8ff }));
-edges.position.y = CEIL / 2;
-scene.add(edges);
-// Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass.
-// A few of them run exhibition matches (see "Stadium" below); the rest are empty for now.
-const GAP_X = ARENA_X + 10, GAP_Z = ARENA_Z + 10, GAP_Y = CEIL + 8;
-{
-  const ring = new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X, CEIL, ARENA_Z)).attributes.position.array;
+
+// A map's floor (or ceiling) shape, with UVs across its bounding box so a grid texture lines up with the walls.
+// `flat` leaves it in its own plane (facing +z) for an object that turns itself, like the mirror.
+function outlineShape(def, ceiling, flat = false) {
+  const geo = new THREE.ShapeGeometry(new THREE.Shape(def.outline.map(([x, z]) => new THREE.Vector2(x, ceiling ? z : -z))));
+  if (flat) return geo;
+  geo.rotateX(ceiling ? Math.PI / 2 : -Math.PI / 2);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + def.hx) / (2 * def.hx), (pos.getZ(i) + def.hz) / (2 * def.hz));
+  uv.needsUpdate = true;
+  return geo;
+}
+// The bright edges of a map's walls, pulled `inset` into the arena: round the floor, round the ceiling, and up each corner.
+function outlineEdges(def, inset) {
+  const sides = mapSides(def), n = sides.length, pts = [];
+  const corner = i => {
+    const s = sides[i], p = sides[(i + n - 1) % n];
+    return [s.ax + (s.nx + p.nx) * inset, s.az + (s.nz + p.nz) * inset];
+  };
+  for (let i = 0; i < n; i++) {
+    const a = corner(i), b = corner((i + 1) % n);
+    for (const y of [inset, CEIL - inset]) pts.push(a[0], y, a[1], b[0], y, b[1]);
+    pts.push(a[0], inset, a[1], a[0], CEIL - inset, a[1]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  return g;
+}
+// The arena you play in, rebuilt when the map changes: floor, glass ceiling, a glass panel per side, edges,
+// the floor's mirror and the layer that catches fighters' shadows.
+let arena = null, shadowCatcher = null;
+function buildArena(def) {
+  setMirror(false);
+  if (arena) {
+    scene.remove(arena);
+    arena.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) { hotMats.delete(o.material); if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+  }
+  arena = new THREE.Group();
+  const W = def.hx * 2, D = def.hz * 2, across = { u0: -def.hx, v0: -def.hz };
+  arena.add(new THREE.Mesh(outlineShape(def, false), roomMat(gridTexture(W, D, undefined, across))));
+  const ceil = new THREE.Mesh(outlineShape(def, true), glassMat(gridTexture(W, D, GLASS_FILL, across)));
+  ceil.position.y = CEIL;
+  arena.add(ceil);
+  for (const s of mapSides(def)) {
+    // A plane faces +z with u along +x; turned to face (nx, nz), u runs along (nz, -nx).
+    const ux = s.nz, uz = -s.nx, cx = (s.ax + s.bx) / 2, cz = (s.az + s.bz) / 2;
+    const at = ux ? { u0: cx - ux * s.len / 2, us: ux, v0: 0 } : { u0: cz - uz * s.len / 2, us: uz, v0: 0 };
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(s.len, CEIL), glassMat(gridTexture(s.len, CEIL, GLASS_FILL, at)));
+    wall.position.set(cx, CEIL / 2, cz);
+    wall.rotation.y = Math.atan2(s.nx, s.nz);
+    arena.add(wall);
+  }
+  arena.add(new THREE.LineSegments(outlineEdges(def, 0.01), hot(new THREE.LineBasicMaterial({ color: 0x8fe8ff }), 2.5)));
+  // The floor's emissive grid ignores light, so a fighter's shadow is a separate dark layer just above it.
+  shadowCatcher = new THREE.Mesh(outlineShape(def, false), new THREE.ShadowMaterial({ opacity: 0.5, depthWrite: false }));
+  shadowCatcher.position.y = 0.004; shadowCatcher.receiveShadow = true; shadowCatcher.renderOrder = -1;
+  shadowCatcher.visible = settings.quality !== 'low';
+  arena.add(shadowCatcher);
+  scene.add(arena);
+  setMirror(settings.mirror);
+}
+// The mirror floor (Settings → Floor reflections): the arena drawn again, upside down, at half resolution, and added
+// softly on top of the floor. It costs a second pass over everything in the arena (not the stadium outside).
+const MirrorShader = {
+  uniforms: { color: { value: null }, tDiffuse: { value: null }, textureMatrix: { value: null }, texel: { value: new THREE.Vector2() } },
+  vertexShader: 'uniform mat4 textureMatrix; varying vec4 vUv; void main() { vUv = textureMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform vec3 color; uniform sampler2D tDiffuse; uniform vec2 texel; varying vec4 vUv;
+    void main() {
+      vec2 uv = vUv.xy / vUv.w;
+      // A little blur: a polished floor, not a perfect mirror.
+      vec3 c = texture2D(tDiffuse, uv).rgb * 0.4
+        + (texture2D(tDiffuse, uv + vec2(texel.x, 0.0)).rgb + texture2D(tDiffuse, uv - vec2(texel.x, 0.0)).rgb
+         + texture2D(tDiffuse, uv + vec2(0.0, texel.y)).rgb + texture2D(tDiffuse, uv - vec2(0.0, texel.y)).rgb) * 0.15;
+      gl_FragColor = vec4(c * color, 1.0);
+    }`,
+};
+let mirror = null;
+function setMirror(on) {
+  if (mirror) {
+    mirror.parent.remove(mirror);
+    mirror.geometry.dispose(); mirror.material.dispose(); mirror.getRenderTarget().dispose();
+    mirror = null;
+  }
+  if (!on || !arena || !THREE.Reflector) return;
+  const size = mirrorSize();
+  mirror = new THREE.Reflector(outlineShape(MAPS[mapKey], false, true), { textureWidth: size.x, textureHeight: size.y, color: 0x2c3644, shader: MirrorShader });
+  // Half-float where the glow uses it, so reflected neon keeps its colour instead of clipping to white.
+  if (HDR) { const t = mirror.getRenderTarget().texture; t.format = THREE.RGBAFormat; t.type = THREE.HalfFloatType; }
+  mirror.material.uniforms.texel.value.set(1 / size.x, 1 / size.y);
+  mirror.material.transparent = true; mirror.material.blending = THREE.AdditiveBlending; mirror.material.depthWrite = false;
+  mirror.rotation.x = -Math.PI / 2; mirror.position.y = 0.002; mirror.renderOrder = -2;
+  arena.add(mirror);
+}
+function mirrorSize() { return renderer.getDrawingBufferSize(new THREE.Vector2()).multiplyScalar(0.5).floor(); }
+function resizeMirror() {
+  if (!mirror) return;
+  const size = mirrorSize();
+  mirror.getRenderTarget().setSize(size.x, size.y);
+  mirror.material.uniforms.texel.value.set(1 / size.x, 1 / size.y);
+}
+// Reflections on metal and glass: the arena's neon, captured once per map from chest height in its middle. It goes
+// through an ordinary cube render first (PMREMGenerator.fromScene packs colour in a way the glass can't blend into).
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envCube = new THREE.CubeCamera(0.1, 100, new THREE.WebGLCubeRenderTarget(256, { format: THREE.RGBAFormat, type: HDR ? THREE.HalfFloatType : THREE.UnsignedByteType }));
+envCube.position.set(0, 1.6, 0);
+let envTarget = null;
+function captureEnv() {
+  const hidden = [];
+  for (const o of scene.children) if (o !== arena && o.visible && !o.isLight) { o.visible = false; hidden.push(o); }
+  if (mirror) mirror.visible = false;
+  shadowCatcher.visible = false;
+  scene.environment = null;
+  envCube.update(renderer, scene);
+  shadowCatcher.visible = key.castShadow;
+  if (mirror) mirror.visible = true;
+  for (const o of hidden) o.visible = true;
+  if (envTarget) envTarget.dispose();
+  envTarget = pmrem.fromCubemap(envCube.renderTarget.texture);
+  scene.environment = envTarget.texture;
+}
+// Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass. They're spaced to fit
+// the largest map. A few run exhibition matches or real ones (see "Stadium" below); the rest are empty for now.
+const GAP_X = Math.max(...Object.values(MAPS).map(m => m.hx * 2)) + 10, GAP_Z = Math.max(...Object.values(MAPS).map(m => m.hz * 2)) + 10, GAP_Y = CEIL + 8;
+// The empty classic cubes, drawn in one go. A cube holding a match on another map is left out (`skip`: slot keys).
+let stadiumDeco = null;
+function buildStadiumDeco(skip) {
+  if (stadiumDeco) { for (const o of stadiumDeco) { scene.remove(o); o.geometry.dispose(); } }
+  const ring = outlineEdges(MAPS.classic, 0).attributes.position.array;
   const pts = [], spots = [];
   for (let ix = -2; ix <= 2; ix++) for (let iy = -1; iy <= 1; iy++) for (let iz = -2; iz <= 2; iz++) {
-    if (!ix && !iy && !iz) continue;
+    if ((!ix && !iy && !iz) || skip.has(ix + ',' + iy + ',' + iz)) continue;
     const ox = ix * GAP_X, oy = iy * GAP_Y, oz = iz * GAP_Z;
-    for (let i = 0; i < ring.length; i += 3) pts.push(ring[i] + ox, ring[i + 1] + oy + CEIL / 2, ring[i + 2] + oz);
+    for (let i = 0; i < ring.length; i += 3) pts.push(ring[i] + ox, ring[i + 1] + oy, ring[i + 2] + oz);
     spots.push([ox, oy + 0.01, oz]);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x1c5f82, transparent: true, opacity: 0.55 })));
-  const floorTex = gridTexture(ARENA_X, ARENA_Z, 'rgba(0, 0, 0, 0)');
-  const floors = new THREE.InstancedMesh(
-    new THREE.PlaneGeometry(ARENA_X, ARENA_Z).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ map: floorTex, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
-    spots.length
-  );
+  const floors = new THREE.InstancedMesh(new THREE.PlaneGeometry(ARENA_X, ARENA_Z).rotateX(-Math.PI / 2), decoFloorMat, spots.length);
   const mtx = new THREE.Matrix4();
   spots.forEach((s, i) => floors.setMatrixAt(i, mtx.makeTranslation(s[0], s[1], s[2])));
-  scene.add(floors);
+  stadiumDeco = [new THREE.LineSegments(g, decoLineMat), floors];
+  for (const o of stadiumDeco) o.layers.set(LAYER_STADIUM);
+  scene.add(...stadiumDeco);
+}
+const decoLineMat = new THREE.LineBasicMaterial({ color: 0x1c5f82, transparent: true, opacity: 0.55 });
+const decoFloorMat = new THREE.MeshBasicMaterial({ map: gridTexture(ARENA_X, ARENA_Z, 'rgba(0, 0, 0, 0)'), transparent: true, opacity: 0.22,
+  blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+buildStadiumDeco(new Set());
+// Switch maps: the walls the game collides with, and the arena you see. Fighters are placed by the caller.
+function setMap(key) {
+  if (!isMap(key)) key = 'classic';
+  mapKey = key; G = GEOS[key];
+  buildArena(MAPS[key]);
+  captureEnv();
 }
 // floor center emblem
 for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
@@ -569,100 +924,189 @@ for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
 }
 scene.add(new THREE.AmbientLight(0x3a5a90, 0.55));
 scene.add(new THREE.HemisphereLight(0x6c8cff, 0x080a14, 0.45));
+// The key light also casts the fighters' (and discs') shadows, over the whole of the largest map. Off on Fast.
 const key = new THREE.DirectionalLight(0xbfdcff, 0.45);
-key.position.set(6, 8, 8);
+key.position.set(12, 16, 16);
+key.castShadow = settings.quality !== 'low';
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -27, right: 27, top: 27, bottom: -27, near: 1, far: 60 });
+key.shadow.camera.updateProjectionMatrix();
+key.shadow.bias = -0.0004;
 scene.add(key);
+// The map chosen on the menu (an online guest plays the host's instead).
+let mapPick = 'classic';
+try { const s = localStorage.getItem('discduel.map'); if (isMap(s)) mapPick = s; } catch (e) { /* storage unavailable */ }
+setMap(mapPick);
 
 // ---------- Meshes ----------
 function makeDiscMesh(color) {
   const g = new THREE.Group();
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 8, 40), new THREE.MeshBasicMaterial({ color }));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 8, 40), hot(new THREE.MeshBasicMaterial({ color }), 2.2));
   rim.rotation.x = Math.PI / 2;
   const core = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 0.06, 32), new THREE.MeshStandardMaterial({ color: 0x0c121c, metalness: 0.8, roughness: 0.3, emissive: color, emissiveIntensity: 0.12 }));
-  const inner = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 6, 24), new THREE.MeshBasicMaterial({ color }));
+  const inner = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.025, 6, 24), hot(new THREE.MeshBasicMaterial({ color }), 2.2));
   inner.rotation.x = Math.PI / 2;
-  const notch = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.05), new THREE.MeshBasicMaterial({ color }));
+  const notch = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.05), hot(new THREE.MeshBasicMaterial({ color }), 2.2));
   g.add(rim, core, inner, notch);
+  for (const m of g.children) m.castShadow = true;
   return g;
 }
 
-// Body builds by difficulty: Easy is the original wide figure, Hard a slim human one.
-// hitR / hitTop are the hitbox (radius around the body's centre line, and its top above the feet).
+// Fighters are people in Tron suits: a body shaped from smooth pieces, jointed at the hips, knees, shoulders, elbows and
+// neck so fighterVisual can pose it. Builds by difficulty: Easy broad and heavy, Normal athletic, Hard tall and slim.
+// h is the figure's height and w how broad it is; hitR / hitTop are the hitbox (radius around the body's centre line,
+// and its top above the feet).
 const BUILDS = {
-  easy: { torsoTop: 0.42, torsoBot: 0.3, torsoH: 0.95, torsoY: 1.3, hipR: 0.31, hipY: 0.78, headR: 0.27, headY: 2.0, headOval: 1,
-    collarR: 0.3, collarY: 1.76, beltR: 0.31, beltY: 0.9, armX: 0.5, shoulderY: 1.7, armTop: 0.1, armBot: 0.08, armLen: 0.85,
-    legX: 0.16, hipJointY: 0.72, legTop: 0.12, legBot: 0.1, legLen: 0.72, depth: 1, neck: false, feet: false, backZ: 0.42, hitR: 0.6, hitTop: 1.8 },
-  normal: { torsoTop: 0.33, torsoBot: 0.23, torsoH: 0.82, torsoY: 1.33, hipR: 0.25, hipY: 0.86, headR: 0.22, headY: 2.0, headOval: 1.1,
-    collarR: 0.22, collarY: 1.73, beltR: 0.24, beltY: 0.95, armX: 0.4, shoulderY: 1.68, armTop: 0.08, armBot: 0.06, armLen: 0.82,
-    legX: 0.13, hipJointY: 0.82, legTop: 0.1, legBot: 0.07, legLen: 0.82, depth: 0.85, neck: true, feet: true, backZ: 0.32, hitR: 0.5, hitTop: 1.9 },
-  hard: { torsoTop: 0.27, torsoBot: 0.17, torsoH: 0.72, torsoY: 1.4, hipR: 0.19, hipY: 0.98, headR: 0.17, headY: 2.06, headOval: 1.15,
-    collarR: 0.16, collarY: 1.76, beltR: 0.18, beltY: 1.06, armX: 0.32, shoulderY: 1.72, armTop: 0.065, armBot: 0.045, armLen: 0.8,
-    legX: 0.1, hipJointY: 0.95, legTop: 0.085, legBot: 0.055, legLen: 0.93, depth: 0.72, neck: true, feet: true, backZ: 0.26, hitR: 0.4, hitTop: 2.0 },
+  easy: { h: 1.8, w: 1.3, hitR: 0.6, hitTop: 1.8 },
+  normal: { h: 1.9, w: 1.05, hitR: 0.5, hitTop: 1.9 },
+  hard: { h: 2.0, w: 0.88, hitR: 0.4, hitTop: 2.0 },
 };
-function makeFighterMesh(color, B = BUILDS.easy) {
+// One piece of the figure from several shapes, each [geometry, position, rotation, scale]: a single draw call.
+function mergeGeos(parts) {
+  const q = new THREE.Quaternion(), e = new THREE.Euler(), mtx = new THREE.Matrix4();
+  const flat = parts.map(([geo, p = [0, 0, 0], r = [0, 0, 0], s = [1, 1, 1]]) => {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    if (g !== geo) geo.dispose();
+    return g.applyMatrix4(mtx.compose(new V3(p[0], p[1], p[2]), q.setFromEuler(e.set(r[0], r[1], r[2])), new V3(s[0], s[1], s[2])));
+  });
+  let n = 0;
+  for (const g of flat) n += g.attributes.position.array.length;
+  const pos = new Float32Array(n), nor = new Float32Array(n);
+  let o = 0;
+  for (const g of flat) { pos.set(g.attributes.position.array, o); nor.set(g.attributes.normal.array, o); o += g.attributes.position.array.length; g.dispose(); }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.userData.shared = true;
+  return out;
+}
+// A limb hanging from its joint at the origin down to -len, with round ends; `prof` is [fraction along it, radius], ...
+const profR = (prof, f) => { for (let i = 1; i < prof.length; i++) if (f <= prof[i][0]) { const a = prof[i - 1], b = prof[i]; return a[1] + (b[1] - a[1]) * (f - a[0]) / (b[0] - a[0]); } return prof[prof.length - 1][1]; };
+function limbGeo(prof, len, seg = 12) {
+  const pts = [], r0 = prof[0][1], r1 = prof[prof.length - 1][1];
+  for (let i = 0; i <= 3; i++) { const a = -Math.PI / 2 + i / 3 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1, -len + Math.sin(a) * r1)); }
+  for (let i = prof.length - 2; i >= 1; i--) pts.push(new THREE.Vector2(prof[i][1], -prof[i][0] * len));
+  for (let i = 0; i <= 3; i++) { const a = i / 3 * Math.PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0, Math.sin(a) * r0)); }
+  return new THREE.LatheGeometry(pts, seg);
+}
+// A glowing seam along points on the suit.
+const seam = (pts, r, closed = false) => new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, closed), closed ? 28 : 10, r, 4, closed);
+// The figure's pieces for a build, shared by every fighter with that build ([left, right] where they differ).
+const figureCache = new Map();
+function figureGeos(B) {
+  if (figureCache.has(B)) return figureCache.get(B);
+  const s = B.h / 1.9, w = B.w, lw = Math.pow(w, 0.7), D = 0.62, sr = 0.0065 * s;
+  const ankleH = 0.085 * s, shinL = 0.44 * s, thighL = 0.45 * s, hipY = ankleH + shinL + thighL;
+  const upperL = 0.31 * s, foreL = 0.27 * s, footL = 0.2 * s;
+  const F = { s, hipY, upperL, foreL, thighL, hipX: 0.095 * s * w, shoulderX: 0.2 * s * w, shoulderY: 1.5 * s, neckY: 1.655 * s };
+  // The torso's outline from the crotch to the neck: [height, half-width] for a 1.9 m figure. Front to back it's D as deep.
+  const prof = [[0.9, 0], [0.905, 0.08], [0.94, 0.15], [1.0, 0.175], [1.06, 0.165], [1.13, 0.145], [1.17, 0.142], [1.25, 0.16],
+    [1.33, 0.18], [1.42, 0.19], [1.49, 0.18], [1.53, 0.15], [1.565, 0.09], [1.58, 0.06], [1.585, 0]];
+  const torsoR = y => profR(prof, y / s) * s * w;
+  // A point just proud of the torso's surface (side -1 front, +1 back), in the upper body's frame (origin at hip height).
+  const onTorso = (x, y, side) => {
+    const rx = torsoR(y) + 0.005, rz = torsoR(y) * D + 0.005;
+    return new V3(x, y - hipY, side * Math.sqrt(Math.max(0, 1 - (x / rx) * (x / rx))) * rz);
+  };
+  const line = (fn, n = 8) => seam(Array.from({ length: n }, (_, i) => fn(i / (n - 1))), sr);
+  const torsoRing = y => seam(Array.from({ length: 16 }, (_, i) => {
+    const a = i / 16 * Math.PI * 2;
+    return new V3(Math.cos(a) * (torsoR(y) + 0.006), y - hipY, Math.sin(a) * (torsoR(y) * D + 0.006));
+  }), sr * 1.3, true);
+  F.chestZ = torsoR(1.33 * s) * D;
+  F.upperBody = mergeGeos([
+    [new THREE.LatheGeometry(prof.map(([y, r]) => new THREE.Vector2(r * s * w, y * s)), 24), [0, -hipY, 0], [0, 0, 0], [1, 1, D]],
+    [new THREE.CylinderGeometry(0.05 * s, 0.056 * s, 0.13 * s, 12), [0, 1.615 * s - hipY, 0]],
+  ]);
+  F.upperGlow = mergeGeos([
+    [torsoRing(1.548 * s)], [torsoRing(1.11 * s)],
+    // Down the front, out along the collarbones, and down each side.
+    [line(t => onTorso(0, (1.535 - t * 0.42) * s, -1))],
+    ...[-1, 1].map(x => [line(t => onTorso(x * (0.025 + t * 0.15) * s * w, (1.545 - t * 0.06) * s, -1))]),
+    ...[-1, 1].map(x => [line(t => { const y = (1.43 - t * 0.31) * s; return new V3(x * (torsoR(y) + 0.005), y - hipY, 0); })]),
+  ]);
+  // The head: a glossy helmet with a slit visor and a seam round its lower edge. Its joint is the top of the neck.
+  const hr = [0.098 * s, 0.128 * s, 0.112 * s], hc = 0.12 * s, rimY = -0.075 * s, rimK = Math.sqrt(1 - (rimY / hr[1]) ** 2);
+  F.helmet = mergeGeos([[new THREE.SphereGeometry(1, 22, 16), [0, hc, 0.005 * s], [0, 0, 0], hr]]);
+  F.headGlow = mergeGeos([
+    [new THREE.CylinderGeometry(1, 1, 0.016 * s, 20, 1, true, Math.PI - 0.8, 1.6), [0, hc + 0.012 * s, 0.005 * s], [0, 0, 0], [hr[0] + 0.003, 1, hr[2] + 0.003]],
+    [seam(Array.from({ length: 16 }, (_, i) => { const a = i / 16 * Math.PI * 2; return new V3(Math.cos(a) * (hr[0] * rimK + 0.003), hc + rimY, 0.005 * s + Math.sin(a) * (hr[2] * rimK + 0.003)); }), sr, true)],
+  ]);
+  const sc = p => p.map(([t, r]) => [t, r * s * lw]);
+  const up = sc([[0, 0.062], [0.3, 0.057], [1, 0.043]]), fore = sc([[0, 0.045], [0.25, 0.048], [1, 0.032]]);
+  const thigh = sc([[0, 0.088], [0.4, 0.078], [1, 0.056]]), shin = sc([[0, 0.054], [0.28, 0.061], [0.7, 0.043], [1, 0.036]]);
+  const outer = (p, len, side, from, to) => line(t => { const f = from + (to - from) * t; return new V3(side * (profR(p, f) + 0.004), -f * len, 0); });
+  const limbRing = (p, len, f) => { const r = profR(p, f) + 0.004; return seam(Array.from({ length: 12 }, (_, i) => { const a = i / 12 * Math.PI * 2; return new V3(Math.cos(a) * r, -f * len, Math.sin(a) * r); }), sr * 1.2, true); };
+  F.arms = [-1, 1].map(side => ({
+    upper: mergeGeos([[limbGeo(up, upperL)]]),
+    upperGlow: mergeGeos([[outer(up, upperL, side, 0.12, 0.9)]]),
+    // Forearm and gloved hand: palm flat to the body, thumb forward.
+    fore: mergeGeos([
+      [limbGeo(fore, foreL)],
+      [new THREE.SphereGeometry(1, 10, 8), [0, -foreL - 0.07 * s, -0.005 * s], [0.15, 0, 0], [0.021 * s, 0.072 * s, 0.04 * s]],
+      [limbGeo([[0, 0.012 * s], [1, 0.01 * s]], 0.045 * s, 6), [-side * 0.008 * s, -foreL - 0.03 * s, -0.03 * s], [0.6, 0, -side * 0.3]],
+    ]),
+    foreGlow: mergeGeos([[outer(fore, foreL, side, 0.08, 0.78)], [limbRing(fore, foreL, 0.88)]]),
+  }));
+  F.legs = [-1, 1].map(side => ({
+    thigh: mergeGeos([[limbGeo(thigh, thighL)]]),
+    thighGlow: mergeGeos([[outer(thigh, thighL, side, 0.1, 0.9)]]),
+    // Shin and boot: the boot's sole sits on the ground when the leg is straight.
+    shin: mergeGeos([
+      [limbGeo(shin, shinL)],
+      [limbGeo(sc([[0, 0.042], [0.55, 0.05], [1, 0.043]]), footL, 10), [0, -shinL - ankleH + 0.03 * s, 0.055 * s], [Math.PI / 2, 0, 0], [lw, 1, 0.6]],
+    ]),
+    shinGlow: mergeGeos([[outer(shin, shinL, side, 0.1, 0.84)], [limbRing(shin, shinL, 0.92)]]),
+  }));
+  F.shinL = shinL;
+  figureCache.set(B, F);
+  return F;
+}
+function makeFighterMesh(color, B = BUILDS.normal) {
+  const F = figureGeos(B);
   const g = new THREE.Group();
-  const body = new THREE.MeshStandardMaterial({ color: 0x0b111b, metalness: 0.6, roughness: 0.35, emissive: 0x000000 });
-  const glow = new THREE.MeshBasicMaterial({ color });
-  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); g.add(m); return m; };
-  add(new THREE.CylinderGeometry(B.torsoTop, B.torsoBot, B.torsoH, 16), body, 0, B.torsoY, 0).scale.z = B.depth;
-  add(new THREE.CylinderGeometry(B.hipR, B.hipR * 0.94, 0.26, 16), body, 0, B.hipY, 0).scale.z = B.depth;
-  if (B.neck) add(new THREE.CylinderGeometry(B.headR * 0.42, B.headR * 0.48, 0.18, 10), body, 0, B.collarY + 0.08, 0);
-  add(new THREE.SphereGeometry(B.headR, 20, 14), body, 0, B.headY, 0).scale.y = B.headOval;
-  add(new THREE.BoxGeometry(B.headR * 1.33, 0.07 * B.headR / 0.27 + 0.02, 0.1), glow, 0, B.headY + 0.01, -B.headR * 0.82);
-  const belt = add(new THREE.TorusGeometry(B.beltR, 0.03, 6, 32), glow, 0, B.beltY, 0);
-  belt.rotation.x = Math.PI / 2; belt.scale.y = B.depth;
-  const collar = add(new THREE.TorusGeometry(B.collarR, 0.025, 6, 32), glow, 0, B.collarY, 0);
-  collar.rotation.x = Math.PI / 2; collar.scale.y = B.depth;
-  add(new THREE.BoxGeometry(0.05, B.torsoH * 0.79, 0.04), glow, 0, B.torsoY + 0.02, -B.torsoTop * 0.88 * B.depth).rotation.x = -0.12;
-  // Arms pivot at the shoulder so they can wind up and swing; +x is the throwing (right) side.
-  const arms = [];
-  for (const s of [-1, 1]) {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(s * B.armX, B.shoulderY, 0);
-    shoulder.rotation.z = s * 0.12;
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(B.armTop, B.armBot, B.armLen, 10), body);
-    arm.position.y = -B.armLen / 2;
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, B.armLen * 0.7, 0.03), glow);
-    stripe.position.set(s * B.armTop * 0.7, -B.armLen / 2, -B.armTop * 0.6);
-    shoulder.add(arm, stripe);
-    g.add(shoulder);
-    arms.push(shoulder);
-  }
+  g.rotation.order = 'YXZ';
+  // A dark suit with a sheen, and a glossier helmet, so the arena's neon traces their shapes.
+  const body = new THREE.MeshStandardMaterial({ color: 0x141c28, metalness: 0.55, roughness: 0.32, emissive: 0x000000 });
+  const helmet = new THREE.MeshStandardMaterial({ color: 0x0c121c, metalness: 0.85, roughness: 0.12, emissive: 0x000000 });
+  const glow = hot(new THREE.MeshBasicMaterial({ color }), 1.8);
+  const joint = (parent, x, y, z) => { const j = new THREE.Group(); j.position.set(x, y, z); parent.add(j); return j; };
+  const piece = (parent, geo, glowGeo, mat = body) => { parent.add(new THREE.Mesh(geo, mat), new THREE.Mesh(glowGeo, glow)); };
+  // The upper body pivots at the hips, so it can lean into a run and twist into a throw. +x is the throwing (right) side.
+  const upper = joint(g, 0, F.hipY, 0);
+  piece(upper, F.upperBody, F.upperGlow);
+  const head = joint(upper, 0, F.neckY - F.hipY, 0);
+  piece(head, F.helmet, F.headGlow, helmet);
+  const shoulders = [], elbows = [], hips = [], knees = [];
+  [-1, 1].forEach((side, i) => {
+    const sh = joint(upper, side * F.shoulderX, F.shoulderY - F.hipY, 0);
+    piece(sh, F.arms[i].upper, F.arms[i].upperGlow);
+    const el = joint(sh, 0, -F.upperL, 0);
+    piece(el, F.arms[i].fore, F.arms[i].foreGlow);
+    const hp = joint(g, side * F.hipX, F.hipY, 0);
+    piece(hp, F.legs[i].thigh, F.legs[i].thighGlow);
+    const kn = joint(hp, 0, -F.thighL, 0);
+    piece(kn, F.legs[i].shin, F.legs[i].shinGlow);
+    shoulders.push(sh); elbows.push(el); hips.push(hp); knees.push(kn);
+  });
   const handDisc = makeDiscMesh(color);
-  // Face along the arm's z axis, so at full wind-up the disc lies almost flat above the shoulder.
+  // Held edge-on in the right hand; at full wind-up it lies almost flat above the shoulder.
   handDisc.rotation.x = Math.PI / 2;
-  handDisc.position.set(0.05, -B.armLen - 0.07, -0.15);
+  handDisc.position.set(0, -F.foreL - 0.09 * F.s, -0.06);
   handDisc.scale.setScalar(0.75);
   handDisc.visible = false;
-  arms[1].add(handDisc);
-  g.rotation.order = 'YXZ';
-  const legs = [];
-  for (const s of [-1, 1]) {
-    const hip = new THREE.Group();
-    hip.position.set(s * B.legX, B.hipJointY, 0);
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(B.legTop, B.legBot, B.legLen, 10), body);
-    leg.position.y = -B.legLen / 2;
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, B.legLen * 0.76, 0.03), glow);
-    stripe.position.set(s * B.legTop * 0.9, -B.legLen / 2, 0);
-    hip.add(leg, stripe);
-    if (B.feet) {
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(B.legBot * 2.2, 0.07, 0.24), body);
-      foot.position.set(0, -B.legLen + 0.02, -0.05);
-      hip.add(foot);
-    }
-    g.add(hip);
-    legs.push(hip);
-  }
+  elbows[1].add(handDisc);
   const backDisc = makeDiscMesh(color);
   backDisc.rotation.x = Math.PI / 2;
-  backDisc.position.set(0, B.torsoY + 0.05, B.backZ);
+  backDisc.position.set(0, 1.33 * F.s - F.hipY, F.chestZ + 0.04);
   backDisc.scale.setScalar(0.75);
-  g.add(backDisc);
+  upper.add(backDisc);
   const shield = new THREE.Mesh(new THREE.CircleGeometry(1.0, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }));
   shield.position.set(0, 1.25, -0.85);
   const shieldRim = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 6 }, (_, i) => new V3(Math.cos(i / 6 * Math.PI * 2), Math.sin(i / 6 * Math.PI * 2), 0))), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0 }));
   shield.add(shieldRim);
   g.add(shield);
+  g.traverse(o => { if (o.isMesh && o !== shield) o.castShadow = true; });
   scene.add(g);
   // Foot ring + blob shadow, sized to the hitbox so you can read it at a glance.
   const foot = new THREE.Mesh(new THREE.RingGeometry(B.hitR + 0.02, B.hitR + 0.12, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
@@ -670,13 +1114,19 @@ function makeFighterMesh(color, B = BUILDS.easy) {
   const blob = new THREE.Mesh(new THREE.CircleGeometry(B.hitR + 0.02, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false }));
   blob.rotation.x = -Math.PI / 2;
   scene.add(foot, blob);
-  return { group: g, body, legs, armL: arms[0], armR: arms[1], handDisc, backDisc, shield, shieldRim, foot, blob, tilt: 0 };
+  return { group: g, body, helmet, upper, head, shoulders, elbows, hips, knees, handDisc, backDisc, shield, shieldRim, foot, blob, tilt: 0 };
 }
-// Swap a fighter's body (and hitbox) for another build.
+// Swap a fighter's body (and hitbox) for another build. The figure's shapes are shared, so only its own parts are freed.
 function setBuild(f, key) {
   if (!BUILDS[key] || f.build === key) return;
   const old = f.mesh;
-  for (const o of [old.group, old.foot, old.blob]) { scene.remove(o); o.traverse(x => { if (x.geometry) x.geometry.dispose(); }); }
+  for (const o of [old.group, old.foot, old.blob]) {
+    scene.remove(o);
+    o.traverse(x => {
+      if (x.geometry && !x.geometry.userData.shared) x.geometry.dispose();
+      if (x.material) { hotMats.delete(x.material); x.material.dispose(); }
+    });
+  }
   f.mesh = makeFighterMesh(f.color, BUILDS[key]);
   f.build = key; f.hitR = BUILDS[key].hitR; f.hitTop = BUILDS[key].hitTop;
 }
@@ -698,7 +1148,7 @@ function makeDisc(owner, color) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const trail = new THREE.Line(geo, hot(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 2));
   trail.frustumCulled = false;
   trail.visible = false;
   scene.add(trail);
@@ -890,7 +1340,12 @@ function chargeSound(on) {
 function chestOf(f, out) { return out.set(f.pos.x, f.pos.y + 1.15, f.pos.z); }
 function forwardOf(f, out) { return out.set(-Math.sin(f.yaw), 0, -Math.cos(f.yaw)); }
 function rightOf(f, out) { return out.set(Math.cos(f.yaw), 0, -Math.sin(f.yaw)); }
-function clampBounds(p) { for (const a of AXES) p[a] = clamp(p[a], BMIN[a] + 0.01, BMAX[a] - 0.01); return p; }
+// Into the space a disc can reach: inside the walls and clear of the blocks.
+function clampBounds(p, g = G) {
+  for (const a of AXES) p[a] = clamp(p[a], g.min[a] + 0.01, g.max[a] - 0.01);
+  pushOut(g, p, DISC_R + 0.01, p.x, p.z);
+  return p;
+}
 function handPos(f, out) {
   chestOf(f, out).add(forwardOf(f, tmp3).multiplyScalar(0.75));
   out.add(rightOf(f, tmp3).multiplyScalar(0.25)); out.y += 0.2;
@@ -907,30 +1362,17 @@ function inFront(f, p) {
   const l = tmp3.length(); if (l < 0.01) return true;
   return (-Math.sin(f.yaw) * tmp3.x - Math.cos(f.yaw) * tmp3.z) / l > 0.05;
 }
-function rayExit(o, d) {
-  let t = Infinity;
-  for (const a of AXES) {
-    if (d[a] > 1e-6) t = Math.min(t, (BMAX[a] - o[a]) / d[a]);
-    else if (d[a] < -1e-6) t = Math.min(t, (BMIN[a] - o[a]) / d[a]);
-  }
-  return Math.max(0, t);
-}
-// Exact ricochet path inside the cube: start point plus one point per wall contact.
+// Exact ricochet path inside the arena (straight, no curve): start point plus one point per wall contact.
 function tracePath(p0, dir, maxBounces, maxLen) {
   const p = p0.clone(), d = dir.clone().normalize(), pts = [p.clone()];
   let len = 0;
   for (let b = 0; b <= maxBounces; b++) {
-    let tMin = Infinity, axis = 'x';
-    for (const a of AXES) {
-      let t = Infinity;
-      if (d[a] > 1e-6) t = (BMAX[a] - p[a]) / d[a];
-      else if (d[a] < -1e-6) t = (BMIN[a] - p[a]) / d[a];
-      if (t < tMin) { tMin = t; axis = a; }
-    }
-    tMin = Math.max(0, tMin);
-    if (len + tMin > maxLen) { p.addScaledVector(d, maxLen - len); pts.push(p.clone()); break; }
-    p.addScaledVector(d, tMin); len += tMin; pts.push(p.clone());
-    d[axis] *= -1;
+    const t = rayHit(G, p, d, DISC_R);
+    if (len + t > maxLen) { p.addScaledVector(d, maxLen - len); pts.push(p.clone()); break; }
+    p.addScaledVector(d, t); len += t; pts.push(p.clone());
+    // Step back off the wall so the next ray starts on the arena side of it.
+    p[rayAxis] += rayN * 1e-4;
+    d[rayAxis] *= -1;
   }
   return pts;
 }
@@ -953,20 +1395,15 @@ function approachAngle(a, b, step) {
 // ---------- Actions ----------
 function tryJump(f) {
   if (f.onGround) { f.vel.y = JUMP_V; f.onGround = false; f.slideT = 0; return; }
-  // Wall jump: in the air and close to a wall, kick off it.
-  if (f.wallJumpCd > 0) return;
-  const limX = HALF_X - PLAYER_R - 0.45, limZ = HALF_Z - PLAYER_R - 0.45;
-  let nx = f.pos.x > limX ? -1 : f.pos.x < -limX ? 1 : 0;
-  let nz = f.pos.z > limZ ? -1 : f.pos.z < -limZ ? 1 : 0;
-  if (!nx && !nz) return;
-  const l = Math.hypot(nx, nz); nx /= l; nz /= l;
+  // Wall jump: in the air and close to a wall (or a block's face), kick off it.
+  if (f.wallJumpCd > 0 || !wallNear(G, f.pos, PLAYER_R + 0.45)) return;
+  const nx = wallN.x, nz = wallN.z;
   const into = f.vel.x * nx + f.vel.z * nz;
   if (into < 0) { f.vel.x -= into * nx; f.vel.z -= into * nz; }
   f.vel.x += nx * 11; f.vel.z += nz * 11;
   f.vel.y = JUMP_V * 0.95;
   f.wallJumpCd = WALLJUMP_CD; f.airDash = false; f.dashT = 0;
-  tmp.set(nx ? -nx * (HALF_X - 0.03) : f.pos.x, f.pos.y + 1, nz ? -nz * (HALF_Z - 0.03) : f.pos.z);
-  spawnRing(tmp, tmp2.set(nx, 0, nz), f.color, 1.6, 0.4);
+  spawnRing(wallAt, tmp2.set(nx, 0, nz), f.color, 1.6, 0.4);
   sfx('walljump', f.pos);
 }
 function tryDash(f, dir) {
@@ -1075,10 +1512,11 @@ function applyHit(victim, credit, dmg, label, dirVel, knock, big) {
   if (victim === player) { state.shake = big ? 0.7 : 0.55; state.hurt = 1; }
   sfx('hit', tmp2);
 }
-function onBounce(d, axis, side) {
+// A disc hit the wall at `wall` on this axis, facing n (+1 / -1).
+function onBounce(d, axis, wall, n) {
   tmp.copy(d.pos);
-  tmp[axis] = axis === 'y' ? (side > 0 ? CEIL - 0.03 : 0.03) : side * (HALF_OF[axis] - 0.03);
-  tmp2.set(0, 0, 0); tmp2[axis] = -side;
+  tmp[axis] = wall + n * 0.03;
+  tmp2.set(0, 0, 0); tmp2[axis] = n;
   spawnRing(tmp, tmp2, d.color, 1.4, 0.6);
   netFx('b', tmp, tmp2, d.owner);
   if (d.state === 'flying') {
@@ -1098,19 +1536,19 @@ function updateDisc(d, dt) {
   for (let i = 0; i < steps && d.state !== 'held'; i++) {
     if (d.state === 'returning') {
       d.returnT += h;
-      chestOf(d.owner, tmp);
-      tmp.sub(d.pos);
+      chestOf(d.owner, tmp2);
+      tmp.subVectors(tmp2, d.pos);
       const dist = tmp.length();
       if (dist < 1.5 || d.returnT > 3.5) { catchDisc(d); break; }
-      tmp.multiplyScalar(RETURN_SPEED / dist);
+      // With a block in the way it heads for the middle of the arena first, which sees every part of the map.
+      if (!losClear(G, d.pos, tmp2, DISC_R)) tmp.set(-d.pos.x, tmp.y, -d.pos.z);
+      tmp.multiplyScalar(RETURN_SPEED / (tmp.length() || 1));
       d.vel.lerp(tmp, 1 - Math.exp(-7 * h));
     }
     if (d.spin && d.state === 'flying') { curveVel(d.vel, d.spin * h); d.spin *= Math.exp(-0.5 * h); }
+    const px = d.pos.x, pz = d.pos.z;
     d.pos.addScaledVector(d.vel, h);
-    for (const a of AXES) {
-      if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); onBounce(d, a, 1); }
-      else if (d.pos[a] < BMIN[a]) { d.pos[a] = 2 * BMIN[a] - d.pos[a]; d.vel[a] = Math.abs(d.vel[a]); onBounce(d, a, -1); }
-    }
+    bounceBall(G, d.pos, d.vel, px, pz, onBounce, d);
     if (d.state === 'held') break;
     const victim = d.state === 'returning' ? other(d.owner) : d.target;
     if (victim.invuln <= 0) {
@@ -1171,11 +1609,9 @@ function updateShards(dt) {
     let gone = sh.life <= 0;
     const steps = Math.max(1, Math.ceil(sh.vel.length() * dt / 0.25)), h = dt / steps;
     for (let k = 0; k < steps && !gone; k++) {
+      const px = sh.pos.x, pz = sh.pos.z;
       sh.pos.addScaledVector(sh.vel, h);
-      for (const a of AXES) {
-        if (sh.pos[a] > BMAX[a]) { sh.pos[a] = 2 * BMAX[a] - sh.pos[a]; sh.vel[a] = -Math.abs(sh.vel[a]); }
-        else if (sh.pos[a] < BMIN[a]) { sh.pos[a] = 2 * BMIN[a] - sh.pos[a]; sh.vel[a] = Math.abs(sh.vel[a]); }
-      }
+      bounceBall(G, sh.pos, sh.vel, px, pz, null);
       const v = sh.target;
       if (v.invuln > 0) continue;
       const dist = distToFighter(sh.pos, v);
@@ -1207,7 +1643,7 @@ function drawShards(list) {
     const col = e[3] === 'p' ? player.color : cpu.color;
     if (sl.color !== col) {
       sl.color = col;
-      sl.mesh.traverse(o => { if (o.material && o.material.type === 'MeshBasicMaterial') o.material.color.setHex(col); });
+      sl.mesh.traverse(o => { if (o.material && o.material.type === 'MeshBasicMaterial') hotColor(o.material, col); });
     }
   }
 }
@@ -1246,6 +1682,7 @@ function physics(f, dt) {
     f.vel.z += (f.wish.z * slow - f.vel.z) * k;
   }
   if (airDashing) f.vel.y = 0; else f.vel.y -= GRAV * dt;
+  const px = f.pos.x, pz = f.pos.z;
   f.pos.addScaledVector(f.vel, dt);
   if (f.pos.y <= 0) { f.pos.y = 0; if (f.vel.y < 0) f.vel.y = 0; f.onGround = true; f.airDash = false; } else { f.onGround = false; f.slideT = 0; }
   if (f.charging) f.chargeT += dt;
@@ -1255,10 +1692,13 @@ function physics(f, dt) {
   f.cd.heavy = Math.max(0, f.cd.heavy - dt); f.cd.split = Math.max(0, f.cd.split - dt);
   if (f.pos.y + PLAYER_H > CEIL) { f.pos.y = CEIL - PLAYER_H; f.vel.y = Math.min(0, f.vel.y); }
   for (const a of ['x', 'z']) {
-    const lim = HALF_OF[a] - PLAYER_R;
+    const lim = (a === 'x' ? G.hx : G.hz) - PLAYER_R;
     if (f.pos[a] > lim) { f.pos[a] = lim; f.vel[a] = Math.min(0, f.vel[a]); }
     if (f.pos[a] < -lim) { f.pos[a] = -lim; f.vel[a] = Math.max(0, f.vel[a]); }
   }
+  // Blocks stop you like walls do: no velocity into the face you ran into.
+  const face = pushOut(G, f.pos, PLAYER_R, px, pz);
+  if (face >= 0) { const a = face < 2 ? 'x' : 'z'; f.vel[a] = face % 2 ? Math.max(0, f.vel[a]) : Math.min(0, f.vel[a]); }
   f.dashCd = Math.max(0, f.dashCd - dt);
   f.blockT = Math.max(0, f.blockT - dt);
   f.blockCd = Math.max(0, f.blockCd - dt);
@@ -1266,27 +1706,67 @@ function physics(f, dt) {
   f.flash = Math.max(0, f.flash - dt * 3.5);
   fighterVisual(f, dt);
 }
+// Pose the figure from the fighter's state. Every joint eases toward its target, so poses blend into each other.
+const ease = (o, k, target, a) => { o[k] += (target - o[k]) * a; };
 function fighterVisual(f, dt) {
   const m = f.mesh;
   m.group.position.copy(f.pos);
   m.group.rotation.y = f.yaw;
-  const sp = Math.hypot(f.vel.x, f.vel.z);
+  const sp = Math.hypot(f.vel.x, f.vel.z), run = Math.min(1, sp / MOVE);
   f.walk += sp * dt * 1.4;
-  const sliding = f.slideT > 0;
-  const swing = f.onGround && !sliding ? Math.sin(f.walk) * 0.7 * Math.min(1, sp / MOVE) : 0.5;
-  m.legs[0].rotation.x = sliding ? 1.25 : f.onGround ? swing : -0.6;
-  m.legs[1].rotation.x = sliding ? 1.0 : f.onGround ? -swing : 0.3;
+  const sliding = f.slideT > 0, air = !f.onGround && !sliding;
+  // Which way you're moving relative to where you face: the legs stride along it, forward, back or sideways.
+  const fz = sp > 0.3 ? (-f.vel.x * Math.sin(f.yaw) - f.vel.z * Math.cos(f.yaw)) / sp : 1;
+  const fx = sp > 0.3 ? (f.vel.x * Math.cos(f.yaw) - f.vel.z * Math.sin(f.yaw)) / sp : 0;
+  const a = 1 - Math.exp(-14 * dt);
+  // Legs: a stride with the knee lifting as each leg swings through; a tuck in the air; one leg out in a slide
+  // (the whole body also leans back, see tilt).
+  for (let i = 0; i < 2; i++) {
+    const side = i ? 1 : -1, ph = f.walk + (i ? Math.PI : 0), swing = Math.sin(ph) * run;
+    let hx, hz = 0, kx;
+    if (sliding) { hx = i ? -0.15 : 0.55; kx = i ? -1.5 : -0.1; }
+    else if (air) { hx = i ? -0.3 : 0.7; kx = i ? -0.75 : -1.2; }
+    else { hx = swing * 0.8 * fz; hz = swing * 0.45 * fx; kx = -(0.06 + 1.15 * run * Math.max(0, Math.cos(ph))); }
+    ease(m.hips[i].rotation, 'x', hx, a);
+    ease(m.hips[i].rotation, 'z', hz + side * 0.03, a);
+    ease(m.knees[i].rotation, 'x', kx, a);
+  }
+  // Arms swing against the legs with the elbows bent more the faster you go; out for balance in the air or a slide.
+  const rx = [0, 0], rz = [-0.08, 0.08], ex = [0.25, 0.25];
+  let twist = 0, lean = -0.22 * run * fz, ra = 1 - Math.exp(-10 * dt);
+  for (let i = 0; i < 2; i++) {
+    rx[i] = -Math.sin(f.walk + (i ? Math.PI : 0)) * 0.7 * run * fz;
+    ex[i] = 0.25 + 1.0 * run;
+  }
+  twist = 0.12 * Math.sin(f.walk) * run * fz;
+  if (air) { rx[0] = rx[1] = -0.35; rz[0] = -0.55; rz[1] = 0.55; ex[0] = ex[1] = 0.6; lean = 0.05; }
+  if (sliding) { rx[0] = 0.2; rx[1] = 0.4; rz[0] = -1.0; rz[1] = 0.8; ex[0] = ex[1] = 0.35; lean = 0.15; }
+  // Throwing: the right arm cocks back over the shoulder as you wind up, shoulders turned and the left arm reaching
+  // forward; on release it whips through and the shoulders follow.
+  const frac = chargeFrac(f);
+  if (f.charging) {
+    rx[1] = -(1.9 + 0.7 * frac); rz[1] = 0.35; ex[1] = 1.3 + 0.3 * frac; twist = 0.35 + 0.3 * frac;
+    rx[0] = 0.9; rz[0] = -0.15; ex[0] = 0.35;
+    ra = 1 - Math.exp(-18 * dt);
+  } else if (f.throwAnim > 0) {
+    rx[1] = 1.35; rz[1] = 0.1; ex[1] = 0.15; twist = -0.45; rx[0] = -0.6; ex[0] = 0.5;
+    ra = 1 - Math.exp(-45 * dt);
+  }
+  // Shield up: the left forearm raised in front.
+  if (f.blockT > 0) { rx[0] = 1.5; rz[0] = 0.25; ex[0] = 0.55; }
+  for (let i = 0; i < 2; i++) {
+    ease(m.shoulders[i].rotation, 'x', rx[i], ra);
+    ease(m.shoulders[i].rotation, 'z', rz[i], ra);
+    ease(m.elbows[i].rotation, 'x', ex[i], ra);
+  }
+  ease(m.upper.rotation, 'x', lean, a);
+  ease(m.upper.rotation, 'y', twist, ra);
+  // The head follows your aim up and down, and stays level when the body leans.
+  ease(m.head.rotation, 'x', clamp((f.pitch || 0) * 0.6, -0.6, 0.6) - m.upper.rotation.x, a);
   // Lean back into a slide (pivoting at the feet).
   m.tilt += ((sliding ? 0.85 : 0) - m.tilt) * Math.min(1, 14 * dt);
   m.group.rotation.x = m.tilt;
   m.group.rotation.z = 0;
-  // Throwing arm: pull back while winding up, whip forward on release, then settle.
-  const frac = chargeFrac(f);
-  let armT = 0, rate = 8;
-  if (f.throwAnim > 0) { armT = 1.5; rate = 45; }
-  else if (f.charging) { armT = -1.7 - 0.7 * frac; rate = 18; }
-  m.armR.rotation.x += (armT - m.armR.rotation.x) * Math.min(1, rate * dt);
-  m.armL.rotation.x += ((f.charging ? 0.7 : f.throwAnim > 0 ? -0.5 : 0) - m.armL.rotation.x) * Math.min(1, 12 * dt);
   m.handDisc.visible = f.charging && f.disc.state === 'held';
   m.handDisc.scale.setScalar(0.75 + 0.2 * frac);
   const so = f.blockT > 0 ? 0.35 + 0.3 * (f.blockT / BLOCK_T) : 0;
@@ -1295,6 +1775,7 @@ function fighterVisual(f, dt) {
   m.shield.visible = so > 0;
   m.backDisc.visible = f.disc.state === 'held' && !f.charging;
   m.body.emissive.setRGB(f.flash, f.flash, f.flash);
+  m.helmet.emissive.copy(m.body.emissive);
   m.group.visible = !(f.invuln > 0 && Math.floor(f.invuln * 24) % 2 === 1);
   m.foot.position.set(f.pos.x, 0.03, f.pos.z);
   m.blob.position.set(f.pos.x, 0.025, f.pos.z);
@@ -1313,26 +1794,49 @@ function separate() {
 
 // ---------- CPU brain ----------
 function aiInit(f) {
-  f.ai = { strafe: Math.random() < 0.5 ? 1 : -1, strafeT: rand(1, 2.5), throwT: rand(0.8, 1.6), handled: '', jumpT: rand(2, 6), prefDist: rand(8, 12), faceT: 0, faceYaw: 0 };
+  f.ai = { strafe: Math.random() < 0.5 ? 1 : -1, strafeT: rand(1, 2.5), throwT: rand(0.8, 1.6), handled: '', jumpT: rand(2, 6), prefDist: rand(8, 12), faceT: 0, faceYaw: 0,
+    seek: null, seekT: 0 };
 }
+// A throw at the opponent: straight at them if nothing is in the way, or banked off one wall (or block face) whose
+// mirror image of them is in reach. Null when neither can reach them.
 function planShot(f, opp, cfg, speed = DISC_SPEED) {
   const hand = handPos(f, new V3());
   const tgt = chestOf(opp, new V3());
   const lead = hand.distanceTo(tgt) / speed;
   tgt.x += opp.vel.x * lead * 0.7; tgt.z += opp.vel.z * lead * 0.7;
   clampBounds(tgt);
-  const direct = tmp2.subVectors(tgt, hand).normalize().clone();
+  const direct = losClear(G, hand, tgt, DISC_R) ? tmp2.subVectors(tgt, hand).normalize().clone() : null;
   const banks = [];
-  for (const a of AXES) for (const s of [BMIN, BMAX]) {
-    const m = tgt.clone(); m[a] = 2 * s[a] - m[a];
+  for (const [a, at] of G.planes) {
+    const m = tgt.clone(); m[a] = 2 * at - m[a];
     const dir = m.sub(hand).normalize();
     const pts = tracePath(hand, dir, 1, 70);
     if (pts.length >= 3 && pathDist(pts.slice(1), tgt) < 1.0 && pts[0].distanceTo(pts[1]) > 2) banks.push(dir);
   }
   let choice = direct;
-  if (banks.length && Math.random() < cfg.bankP) choice = banks[Math.floor(Math.random() * banks.length)];
+  if (banks.length && (!direct || Math.random() < cfg.bankP)) choice = banks[Math.floor(Math.random() * banks.length)];
+  if (!choice) return null;
   choice.x += gauss() * cfg.aimErr; choice.y += gauss() * cfg.aimErr * 0.6; choice.z += gauss() * cfg.aimErr;
   return choice.normalize();
+}
+// Out of sight behind a block: the nearest spot within a short straight walk that can see the opponent
+// (the middle of the arena if none). Null when the opponent is already in sight.
+function losSpot(f, opp) {
+  const eye = chestOf(f, new V3()), tgt = chestOf(opp, new V3());
+  if (losClear(G, eye, tgt)) return null;
+  const c = new V3();
+  for (const r of [2.5, 5, 8]) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < 12; i++) {
+      const ang = i / 12 * Math.PI * 2;
+      c.set(f.pos.x + Math.cos(ang) * r, eye.y, f.pos.z + Math.sin(ang) * r);
+      if (!insideMap(G, c.x, c.z, PLAYER_R + 0.3) || !losClear(G, eye, c, PLAYER_R) || !losClear(G, c, tgt)) continue;
+      const d = c.distanceTo(tgt);
+      if (d < bestD) { bestD = d; best = c.clone(); }
+    }
+    if (best) return best;
+  }
+  return new V3(0, eye.y, 0);
 }
 function aiUpdate(f, opp, cfg, dt) {
   const ai = f.ai;
@@ -1347,9 +1851,23 @@ function aiUpdate(f, opp, cfg, dt) {
   let wx = -tz * ai.strafe * 0.85, wz = tx * ai.strafe * 0.85;
   const radial = clamp((dist - ai.prefDist) / 4, -1, 1);
   wx += tx * radial; wz += tz * radial;
-  const mx = HALF_X - 3, mz = HALF_Z - 3;
+  // Can't see them past a block: go to where it can, instead of circling.
+  if (G.blocks.length) {
+    ai.seekT -= dt;
+    if (ai.seekT <= 0) { ai.seekT = 0.4; ai.seek = losSpot(f, opp); }
+    if (ai.seek) {
+      const sx = ai.seek.x - f.pos.x, sz = ai.seek.z - f.pos.z, sl = Math.hypot(sx, sz);
+      if (sl > 0.6) { wx = sx / sl * 1.5; wz = sz / sl * 1.5; }
+    }
+  } else ai.seek = null;
+  const mx = G.hx - 3, mz = G.hz - 3;
   if (f.pos.x > mx) wx -= (f.pos.x - mx); if (f.pos.x < -mx) wx += (-mx - f.pos.x);
   if (f.pos.z > mz) wz -= (f.pos.z - mz); if (f.pos.z < -mz) wz += (-mz - f.pos.z);
+  // Keep off the blocks' faces the same way.
+  for (const b of G.blocks) {
+    const ox = f.pos.x - clamp(f.pos.x, b[0], b[1]), oz = f.pos.z - clamp(f.pos.z, b[2], b[3]), od = Math.hypot(ox, oz);
+    if (od > 1e-3 && od < 3) { wx += ox / od * (3 - od); wz += oz / od * (3 - od); }
+  }
   const wl = Math.hypot(wx, wz);
   if (wl > 0.15) f.wish.set(wx / wl * MOVE * 0.85, 0, wz / wl * MOVE * 0.85); else f.wish.set(0, 0, 0);
 
@@ -1383,11 +1901,12 @@ function aiUpdate(f, opp, cfg, dt) {
   if (f.charging) {
     if (f.disc.state !== 'held' || f.blockT > 0) cancelCharge(f);
     else if (f.chargeT >= ai.chargeGoal) {
-      const sp = chargeSpeed(f);
-      throwDisc(f, planShot(f, opp, cfg, sp * (f.armed === 'heavy' ? HEAVY_SPEED : 1)), sp, f.armed || 'normal');
-      ai.throwT = rand(cfg.throwDelay[0], cfg.throwDelay[1]);
+      const sp = chargeSpeed(f), dir = planShot(f, opp, cfg, sp * (f.armed === 'heavy' ? HEAVY_SPEED : 1));
+      if (dir) { throwDisc(f, dir, sp, f.armed || 'normal'); ai.throwT = rand(cfg.throwDelay[0], cfg.throwDelay[1]); }
+      // They ducked out of reach: hold the wind-up a little longer, then let it go.
+      else if (f.chargeT > ai.chargeGoal + 1.2) { cancelCharge(f); ai.throwT = 0.3; }
     }
-  } else if (f.disc.state === 'held' && ai.throwT <= 0 && opp.invuln < 0.2 && f.blockT <= 0) {
+  } else if (f.disc.state === 'held' && ai.throwT <= 0 && opp.invuln < 0.2 && f.blockT <= 0 && planShot(f, opp, cfg)) {
     // Wind up for a random time, up to this difficulty's limit.
     f.charging = true; f.chargeT = 0;
     ai.chargeGoal = Math.random() * cfg.chargeMax;
@@ -1450,7 +1969,7 @@ function toggleArm(f, kind) {
 }
 function playerAimDir(out) {
   const o = clampBounds(cam.pos.clone());
-  const t = rayExit(o, cam.dir);
+  const t = rayHit(G, o, cam.dir, DISC_R);
   const aim = o.clone().addScaledVector(cam.dir, t);
   const chest = chestOf(cpu, new V3());
   const tc = tmp.subVectors(chest, cam.pos).dot(cam.dir);
@@ -1531,7 +2050,7 @@ camera.add(vm);
 scene.add(camera);
 {
   const body = new THREE.MeshStandardMaterial({ color: 0x0b111b, metalness: 0.6, roughness: 0.35 });
-  const glow = new THREE.MeshBasicMaterial({ color: COL_YOU });
+  const glow = hot(new THREE.MeshBasicMaterial({ color: COL_YOU }), 1.8);
   const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.6, 12), body);
   forearm.rotation.x = -1.25; forearm.position.set(0, -0.06, 0.12);
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.42, 0.012), glow);
@@ -1552,8 +2071,14 @@ const vmShield = new THREE.Mesh(new THREE.CircleGeometry(0.42, 6), new THREE.Mes
 vmShield.position.set(0, -0.04, -0.62);
 vm.add(vmShield);
 vm.traverse(o => {
+  o.layers.set(LAYER_VIEW);
+  o.castShadow = false;
   if (!o.material) return;
+  // Right in front of your eye, white-hot neon would flood the screen: the arm keeps its plain colours.
+  const e = hotMats.get(o.material);
+  hotMats.delete(o.material);
   o.material = o.material.clone();
+  if (e) o.material.color.copy(e.base);
   o.material.depthTest = false; o.material.depthWrite = false;
   o.renderOrder = 999;
 });
@@ -1607,9 +2132,21 @@ function updateCamera(dt) {
     } else {
       cam.pos.set(p.pos.x, p.pos.y + 2.2 - 0.7 * m.tilt, p.pos.z).addScaledVector(cam.dir, -5.2).addScaledVector(rightOf(p, tmp), 1.25);
     }
-    cam.pos.x = clamp(cam.pos.x, -HALF_X + 0.3, HALF_X - 0.3);
-    cam.pos.z = clamp(cam.pos.z, -HALF_Z + 0.3, HALF_Z - 0.3);
+    cam.pos.x = clamp(cam.pos.x, -G.hx + 0.3, G.hx - 0.3);
+    cam.pos.z = clamp(cam.pos.z, -G.hz + 0.3, G.hz - 0.3);
     cam.pos.y = clamp(cam.pos.y, 0.3, CEIL - 0.3);
+    // Over the shoulder, a block behind you pulls the camera in rather than letting it look through the block.
+    if (!firstPerson && G.blocks.length) {
+      tmp.set(p.pos.x, p.pos.y + 2.2 - 0.7 * m.tilt, p.pos.z);
+      tmp2.subVectors(cam.pos, tmp);
+      const len = tmp2.length();
+      if (len > 1e-3) {
+        tmp2.multiplyScalar(1 / len);
+        let t = len;
+        for (const b of G.blocks) t = Math.min(t, blockEntry(b, 0.3, tmp, tmp2));
+        cam.pos.copy(tmp).addScaledVector(tmp2, t);
+      }
+    }
     camera.position.copy(cam.pos);
     if (state.shake > 0 && !reducedMotion) {
       camera.position.x += (Math.random() - 0.5) * state.shake * 0.5;
@@ -1623,7 +2160,8 @@ function updateCamera(dt) {
   } else {
     if (camera.fov !== 72) { camera.fov = 72; camera.updateProjectionMatrix(); }
     cam.orbit += dt * 0.09;
-    camera.position.set(Math.sin(cam.orbit) * 9.5, 6 + Math.sin(cam.orbit * 0.7) * 1.2, Math.cos(cam.orbit) * 9.5);
+    const r = MAPS[mapKey].orbit;
+    camera.position.set(Math.sin(cam.orbit) * r, 6 + Math.sin(cam.orbit * 0.7) * 1.2, Math.cos(cam.orbit) * r);
     camera.lookAt(0, 2.5, 0);
   }
   state.shake = Math.max(0, state.shake - dt * 1.6);
@@ -1648,8 +2186,13 @@ function resetFighter(f, z, yaw) {
   f.disc.state = 'held';
   aiInit(f);
 }
-resetFighter(player, 10, 0);
-resetFighter(cpu, -10, Math.PI);
+// Both fighters back to their ends of the current map: you at +z facing -z, your opponent opposite.
+function placeFighters(meFirst = true) {
+  const z = MAPS[mapKey].spawn;
+  resetFighter(player, meFirst ? z : -z, meFirst ? 0 : Math.PI);
+  resetFighter(cpu, meFirst ? -z : z, meFirst ? Math.PI : 0);
+}
+placeFighters();
 
 const $ = id => document.getElementById(id);
 const ui = {
@@ -1683,12 +2226,11 @@ function startRound() {
   audio();
   for (const f of floats) f.el.remove();
   floats.length = 0;
-  resetFighter(player, 10, 0);
-  resetFighter(cpu, -10, Math.PI);
+  placeFighters();
   // Both fighters take the chosen difficulty's build (and its hitbox).
   setBuild(player, state.diff); setBuild(cpu, state.diff);
   state.time = ROUND; state.mode = 'playing'; state.hurt = 0;
-  ui.diffLabel.textContent = state.diff + ' CPU';
+  ui.diffLabel.textContent = state.diff + ' CPU · ' + MAPS[mapKey].name;
   show('playing');
   lock();
 }
@@ -1703,7 +2245,9 @@ function pause() {
 function resume() { state.mode = 'playing'; show('playing'); lock(); }
 function toMenu() {
   state.mode = 'menu'; show('menu'); unlock();
-  resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI);
+  // Back from an online match on the host's map: your own pick again.
+  if (mapKey !== mapPick) setMap(mapPick);
+  placeFighters();
   setBuild(player, state.diff); setBuild(cpu, state.diff);
 }
 function endRound() {
@@ -1711,12 +2255,12 @@ function endRound() {
   state.mode = 'results'; unlock();
   const y = player.dmg, c = cpu.dmg, online = !!net.match;
   const me = playerName(), foe = online ? (net.oppName || 'Rival') : 'CPU';
-  $('resEyebrow').textContent = online ? 'Time · online match ' + net.code : 'Time · ' + state.diff + ' CPU';
+  $('resEyebrow').textContent = (online ? 'Time · online match ' + net.code : 'Time · ' + state.diff + ' CPU') + ' · ' + MAPS[mapKey].name;
   $('resTitle').textContent = y > c ? 'You win' : y < c ? foe + ' wins' : 'Draw';
   const guestWait = online && net.role === 'guest';
   $('rematchBtn').disabled = guestWait;
   $('rematchBtn').textContent = guestWait ? 'Waiting for host to rematch' : 'Rematch';
-  $('menuBtn').textContent = online ? 'Leave match' : 'Change difficulty';
+  $('menuBtn').textContent = online ? 'Leave match' : 'Change map or difficulty';
   $('resTitle').style.color = y > c ? 'var(--you)' : y < c ? 'var(--cpu)' : 'var(--ink)';
   const pct = f => f.throws ? Math.round(f.hits / f.throws * 100) + '%' : '–';
   const avg = f => f.hits ? (f.dmg / f.hits).toFixed(1) : '–';
@@ -2073,17 +2617,62 @@ function renderBinds() {
     box.append(name, btn);
   }
 }
+// ---------- Frame rate (Settings → Show frame rate) ----------
+// Frames per second with the average and worst frame time over each half second. Where the browser allows it
+// (EXT_disjoint_timer_query_webgl2), also the graphics card's time per frame, which shows what a graphics setting
+// costs even when the frame rate sits at the screen's refresh rate.
+const perf = { el: $('fps'), t0: 0, frames: 0, sum: 0, worst: 0, gl: renderer.getContext(), ext: null, pending: [], gpuSum: 0, gpuN: 0 };
+try { perf.ext = perf.gl.getExtension('EXT_disjoint_timer_query_webgl2'); } catch (e) { perf.ext = null; }
+function perfShow() {
+  perf.el.hidden = !settings.fps;
+  for (const q of perf.pending) perf.gl.deleteQuery(q);
+  perf.pending.length = 0;
+  perf.t0 = performance.now(); perf.frames = perf.sum = perf.worst = perf.gpuSum = perf.gpuN = 0;
+  perf.el.textContent = '… fps';
+}
+// Wrap one frame's drawing in a GPU timer.
+function perfBegin() {
+  if (!settings.fps || !perf.ext || perf.pending.length > 8) return null;
+  const q = perf.gl.createQuery();
+  perf.gl.beginQuery(perf.ext.TIME_ELAPSED_EXT, q);
+  return q;
+}
+function perfEnd(q) { if (q) { perf.gl.endQuery(perf.ext.TIME_ELAPSED_EXT); perf.pending.push(q); } }
+function perfFrame(now, ms) {
+  if (!settings.fps) return;
+  const gl = perf.gl;
+  // GPU results arrive a frame or two later, in order.
+  while (perf.pending.length && gl.getQueryParameter(perf.pending[0], gl.QUERY_RESULT_AVAILABLE)) {
+    const q = perf.pending.shift();
+    if (!gl.getParameter(perf.ext.GPU_DISJOINT_EXT)) { perf.gpuSum += gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6; perf.gpuN++; }
+    gl.deleteQuery(q);
+  }
+  perf.frames++; perf.sum += ms; perf.worst = Math.max(perf.worst, ms);
+  if (now - perf.t0 < 500) return;
+  let s = Math.round(perf.frames * 1000 / (now - perf.t0)) + ' fps · ' + (perf.sum / perf.frames).toFixed(1) + ' ms · worst ' + perf.worst.toFixed(1);
+  if (perf.gpuN) s += ' · GPU ' + (perf.gpuSum / perf.gpuN).toFixed(1) + ' ms';
+  perf.el.textContent = s;
+  perf.t0 = now; perf.frames = perf.sum = perf.worst = perf.gpuSum = perf.gpuN = 0;
+}
+perfShow();
 function applyQuality() {
   const pr = settings.quality === 'low' ? 1 : Math.min(window.devicePixelRatio || 1, 1.75);
   renderer.setPixelRatio(pr);
   renderer.setSize(innerWidth, innerHeight);
   if (composer) { if (composer.setPixelRatio) composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
+  resizeMirror();
+  // Fast also drops the fighters' shadows.
+  key.castShadow = settings.quality !== 'low';
+  if (shadowCatcher) shadowCatcher.visible = key.castShadow;
 }
 function renderSettings() {
   $('setFov').value = String(settings.fov); $('setFovOut').textContent = settings.fov + '°';
   $('setVol').value = String(Math.round(settings.sfx * 100)); $('setVolOut').textContent = Math.round(settings.sfx * 100) + '%';
   $('setBloom').checked = settings.bloom;
+  $('setMirror').checked = settings.mirror;
+  $('setMirror').disabled = !THREE.Reflector;
   $('setStadium').checked = settings.stadium;
+  $('setFps').checked = settings.fps;
   $('setStadium').disabled = !STADIUM;
   $('setQuality').value = settings.quality;
   renderSens(); renderBinds();
@@ -2093,7 +2682,9 @@ $('setVol').addEventListener('input', e => {
   settings.sfx = clamp(+e.target.value / 100, 0, 1); $('setVolOut').textContent = Math.round(settings.sfx * 100) + '%';
   applyVolume(); saveSettings();
 });
-$('setBloom').addEventListener('change', e => { settings.bloom = e.target.checked; saveSettings(); });
+$('setBloom').addEventListener('change', e => { settings.bloom = e.target.checked; applyHot(); saveSettings(); });
+$('setMirror').addEventListener('change', e => { settings.mirror = e.target.checked; setMirror(settings.mirror); saveSettings(); });
+$('setFps').addEventListener('change', e => { settings.fps = e.target.checked; perfShow(); saveSettings(); });
 $('setStadium').addEventListener('change', e => { settings.stadium = e.target.checked; saveSettings(); });
 $('setQuality').addEventListener('change', e => { settings.quality = e.target.value === 'low' ? 'low' : 'high'; applyQuality(); saveSettings(); });
 $('resetBinds').addEventListener('click', () => { settings.binds = Object.assign({}, DEFAULT_BINDS); rebinding = null; saveSettings(); renderBinds(); });
@@ -2131,11 +2722,26 @@ document.addEventListener('pointerlockchange', () => {
   if (!locked && state.wasLocked && state.mode === 'playing') pause();
   state.wasLocked = locked;
 });
-document.querySelectorAll('.diff button').forEach(b => b.addEventListener('click', () => {
+// Only the difficulty buttons: the leaderboard's tabs share the .diff look but aren't difficulties.
+document.querySelectorAll('[data-diff]').forEach(b => b.addEventListener('click', () => {
   state.diff = b.dataset.diff;
   setBuild(player, state.diff); setBuild(cpu, state.diff);
-  document.querySelectorAll('.diff button').forEach(o => o.setAttribute('aria-checked', String(o === b)));
+  document.querySelectorAll('[data-diff]').forEach(o => o.setAttribute('aria-checked', String(o === b)));
 }));
+function renderMapPick() {
+  document.querySelectorAll('[data-map]').forEach(o => o.setAttribute('aria-checked', String(o.dataset.map === mapPick)));
+  $('menuEyebrow').textContent = MAPS[mapPick].eyebrow;
+  $('mapNote').textContent = MAPS[mapPick].note;
+  $('mapNote').hidden = !MAPS[mapPick].note;
+}
+document.querySelectorAll('[data-map]').forEach(b => b.addEventListener('click', () => {
+  mapPick = b.dataset.map;
+  try { localStorage.setItem('discduel.map', mapPick); } catch (e) { /* storage unavailable */ }
+  setMap(mapPick);
+  placeFighters();
+  renderMapPick();
+}));
+renderMapPick();
 $('startBtn').addEventListener('click', startRound);
 $('resumeBtn').addEventListener('click', resume);
 $('quitBtn').addEventListener('click', () => { if (net.match) netEnd('You left the match.'); else toMenu(); });
@@ -2162,6 +2768,7 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   if (composer) composer.setSize(innerWidth, innerHeight);
+  resizeMirror();
 });
 
 // ---------- Online ----------
@@ -2279,6 +2886,7 @@ function netSend(now) {
         sh: shards.slice(0, 4).map(sh => [r2(sh.pos.x), r2(sh.pos.y), r2(sh.pos.z), r2(sh.vel.x), r2(sh.vel.y), r2(sh.vel.z), sh.owner === player ? 0 : 1]) }
     : { k: 'g', f: packF(player), a: [net.act.t, net.act.r].concat(net.act.dir) };
   p.ts = r3(now / 1000);
+  if (net.role === 'host') p.mp = mapKey;
   if (net.role === 'host' && hub.mySlot) p.sl = hub.mySlot;
   p.n = playerName();
   net.match.presence(p).catch(() => {});
@@ -2321,7 +2929,7 @@ async function openMatch(code, role) {
   });
   $('netMsg').textContent = '';
   $('lobbyCode').textContent = code;
-  $('lobbyMsg').textContent = role === 'host' ? 'Send this code to your opponent. The match starts as soon as they join.' : 'Looking for match ' + code + '…';
+  $('lobbyMsg').textContent = role === 'host' ? 'Send this code to your opponent. The match starts as soon as they join. Map: ' + MAPS[mapKey].name + '.' : 'Looking for match ' + code + '…';
   state.mode = 'lobby'; show('lobby');
   net.unsub = m.onPeers(onMatchPeers, e => netEnd(NET_ERRORS[e && e.code] || 'Lost the connection to the match.'));
   netSend(performance.now());
@@ -2361,22 +2969,24 @@ function onMatchPeers(ch) {
       return;
     }
     net.oppPeer = h.peer; net.opp = h.presence; net.oppAt = h.updatedAt; recordSnap(h.presence); setOppName(h.presence.n);
+    // The host's map is the match's map (a host from before maps existed plays the classic one).
+    const mp = isMap(h.presence.mp) ? h.presence.mp : 'classic';
+    if (mp !== mapKey && state.mode !== 'playing' && state.mode !== 'paused') setMap(mp);
     const ph = h.presence.ph;
     if ((ph === 'count' || ph === 'play') && (state.mode === 'lobby' || state.mode === 'results')) beginOnlineRound();
     else if (ph === 'over' && (state.mode === 'playing' || state.mode === 'paused')) { applyHostState(h.presence, 0, 0); endRound(); }
-    else if (ph === 'wait' && state.mode === 'lobby') $('lobbyMsg').textContent = 'Found ' + (net.oppName || 'the host') + '. Starting…';
+    else if (ph === 'wait' && state.mode === 'lobby') $('lobbyMsg').textContent = 'Found ' + (net.oppName || 'the host') + '. Starting on the ' + MAPS[mapKey].name + ' map…';
   }
 }
 function beginOnlineRound() {
   audio();
   for (const f of floats) f.el.remove();
   floats.length = 0;
-  if (net.role === 'host') { resetFighter(player, 10, 0); resetFighter(cpu, -10, Math.PI); }
-  else { resetFighter(player, -10, Math.PI); resetFighter(cpu, 10, 0); }
+  placeFighters(net.role === 'host');
   // Online, both players use the slim Hard build, so neither has a bigger hitbox.
   setBuild(player, 'hard'); setBuild(cpu, 'hard');
   state.time = ROUND; state.hurt = 0; state.mode = 'playing';
-  ui.diffLabel.textContent = 'Online · ' + net.code;
+  ui.diffLabel.textContent = 'Online · ' + net.code + ' · ' + MAPS[mapKey].name;
   $('cpuTag').textContent = net.oppName || 'RIVAL';
   show('playing');
   lock();
@@ -2435,18 +3045,21 @@ function sampleSnaps(out, f) {
 }
 function remoteFighter(f, pk, age, dt) {
   if (Array.isArray(pk) && pk.length >= 11) {
-    const limX = HALF_X - PLAYER_R, limZ = HALF_Z - PLAYER_R;
+    const limX = G.hx - PLAYER_R, limZ = G.hz - PLAYER_R;
     f.vel.set(num(pk[3]), num(pk[4]), num(pk[5]));
     if (net.role === 'guest' && sampleSnaps(tmp, f)) {
       tmp.x = clamp(tmp.x, -limX, limX); tmp.z = clamp(tmp.z, -limZ, limZ);
+      pushOut(G, tmp, PLAYER_R, tmp.x, tmp.z);
       f.pos.copy(tmp);
     } else {
       // Host view of the guest: the host decides hits, so stay close to the newest position.
-      // Move on the reported velocity, then ease out the remaining error.
+      // Move on the reported velocity, then ease out the remaining error. Never inside a block, even if an
+      // out-of-date guest page doesn't know about them.
       tmp.set(num(pk[0]) + num(pk[3]) * age, Math.max(0, num(pk[1]) + num(pk[4]) * age), num(pk[2]) + num(pk[5]) * age);
       tmp.x = clamp(tmp.x, -limX, limX); tmp.z = clamp(tmp.z, -limZ, limZ);
+      pushOut(G, tmp, PLAYER_R, tmp.x, tmp.z);
       if (f.pos.distanceTo(tmp) > 3) f.pos.copy(tmp);
-      else { f.pos.addScaledVector(f.vel, dt); f.pos.lerp(tmp, 1 - Math.exp(-10 * dt)); f.pos.y = Math.max(0, f.pos.y); }
+      else { f.pos.addScaledVector(f.vel, dt); f.pos.lerp(tmp, 1 - Math.exp(-10 * dt)); f.pos.y = Math.max(0, f.pos.y); pushOut(G, f.pos, PLAYER_R, f.pos.x, f.pos.z); }
       const dy = ((num(pk[6]) - f.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
       f.yaw += dy * (1 - Math.exp(-20 * dt));
     }
@@ -2464,11 +3077,9 @@ function remoteFighter(f, pk, age, dt) {
 // The guest's own throw flies right away on their screen until the host's copy shows up.
 function predictDisc(d, dt) {
   if (d.spin) { curveVel(d.vel, d.spin * dt); d.spin *= Math.exp(-0.5 * dt); }
+  const px = d.pos.x, pz = d.pos.z;
   d.pos.addScaledVector(d.vel, dt);
-  for (const a of AXES) {
-    if (d.pos[a] > BMAX[a]) { d.pos[a] = 2 * BMAX[a] - d.pos[a]; d.vel[a] = -Math.abs(d.vel[a]); }
-    else if (d.pos[a] < BMIN[a]) { d.pos[a] = 2 * BMIN[a] - d.pos[a]; d.vel[a] = Math.abs(d.vel[a]); }
-  }
+  bounceBall(G, d.pos, d.vel, px, pz, null);
   d.life += dt;
   discVisual(d, dt);
 }
@@ -2479,13 +3090,9 @@ function remoteDisc(d, pk, age, dt) {
     if (st && st !== 'held') net.predUntil = 0;
   }
   if (!st || st === 'held') { d.state = 'held'; discVisual(d, dt); return; }
-  tmp.set(num(pk[1]) + num(pk[4]) * age, num(pk[2]) + num(pk[5]) * age, num(pk[3]) + num(pk[6]) * age);
-  for (const a of AXES) {
-    let v = tmp[a];
-    if (v > BMAX[a]) v = 2 * BMAX[a] - v;
-    if (v < BMIN[a]) v = 2 * BMIN[a] - v;
-    tmp[a] = clamp(v, BMIN[a], BMAX[a]);
-  }
+  // Carry the host's position forward by the packet's age, bouncing as the disc would.
+  tmp.set(num(pk[1]), num(pk[2]), num(pk[3]));
+  clampBounds(extrapolate(G, tmp, tmp2.set(num(pk[4]), num(pk[5]), num(pk[6])), age));
   if (d.state === 'held') {
     d.pos.copy(tmp);
     const arr = d.trail.geometry.attributes.position.array;
@@ -2583,8 +3190,8 @@ function netStep(dt) {
     remoteFighter(cpu, h && h.f, age, dt);
     if (h) applyHostState(h, age, dt);
     drawShards(h && Array.isArray(h.sh) && h.sh.length && h.ph === 'play' ? h.sh.map(e => {
-      const q = [0, 1, 2].map(j => foldAxis(num(e[j]) + num(e[3 + j]) * age, BMIN.getComponent(j), BMAX.getComponent(j)));
-      return [q[0], q[1], q[2], num(e[6]) === 1 ? 'p' : 'c'];
+      const q = clampBounds(extrapolate(G, tmp.set(num(e[0]), num(e[1]), num(e[2])), tmp2.set(num(e[3]), num(e[4]), num(e[5])), age));
+      return [q.x, q.y, q.z, num(e[6]) === 1 ? 'p' : 'c'];
     }) : []);
     showBanner(h && h.ph === 'count' ? num(h.ct) : -1);
   }
@@ -2615,13 +3222,12 @@ function exhibitReset(m) {
   m.f[0].disc.target = 1; m.f[1].disc.target = 0; m.f[1].disc.credit = 1;
   m.clock = ROUND;
 }
+// Exhibitions always play the classic map; a real match next door is drawn on its own map (exhibitMap).
 function makeExhibit(slot, cols) {
   const g = new THREE.Group();
   g.position.set(slot[0] * GAP_X, slot[1] * GAP_Y, slot[2] * GAP_Z);
   scene.add(g);
-  const live = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA_X - 0.06, CEIL - 0.06, ARENA_Z - 0.06)),
-    new THREE.LineBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: 0.75 }));
-  live.position.y = CEIL / 2;
+  const live = new THREE.LineSegments(outlineEdges(MAPS.classic, 0.03), new THREE.LineBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: 0.75 }));
   g.add(live);
   const views = cols.map(color => {
     const mesh = makeFighterMesh(color);
@@ -2633,7 +3239,7 @@ function makeExhibit(slot, cols) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const trail = new THREE.Line(geo, hot(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 2));
     trail.frustumCulled = false; trail.visible = false;
     g.add(disc, trail);
     // The fields fighterVisual reads, filled from digests each frame.
@@ -2653,26 +3259,33 @@ function makeExhibit(slot, cols) {
   board.position.y = CEIL + 2.6;
   g.add(board);
   const m = { group: g, cols, views, ring, ringT: 1, board: { canvas, tex, key: '' }, buf: [], t: 0, acc: 0, tick: 0, hitSeq: 0, hit: [0, 0, 0, 0], hitSeen: 0,
-    slotKey: slot.join(','), net: false };
+    slotKey: slot.join(','), net: false, live, g: GEOS.classic };
+  g.traverse(o => o.layers.set(LAYER_STADIUM));
   exhibitReset(m);
   m.clock = rand(30, ROUND);
   return m;
+}
+function exhibitMap(m, key) {
+  if (m.g.key === key) return;
+  m.g = GEOS[key];
+  m.live.geometry.dispose();
+  m.live.geometry = outlineEdges(MAPS[key], 0.03);
 }
 
 const exChest = (f, out) => out.set(f.pos.x, f.pos.y + 1.15, f.pos.z);
 function exThrow(m, f, o) {
   const d = f.disc, k = Math.min(1, f.chargeT / CHARGE_T);
   const speed = DISC_SPEED + (CHARGE_SPEED - DISC_SPEED) * (1 - (1 - k) * (1 - k));
-  const hand = tmp.set(f.pos.x - Math.sin(f.yaw) * 0.75, f.pos.y + 1.35, f.pos.z - Math.cos(f.yaw) * 0.75);
-  clampBounds(hand);
+  const g = m.g, hand = tmp.set(f.pos.x - Math.sin(f.yaw) * 0.75, f.pos.y + 1.35, f.pos.z - Math.cos(f.yaw) * 0.75);
+  clampBounds(hand, g);
   const tgt = exChest(o, tmp2);
   const lead = hand.distanceTo(tgt) / speed;
   tgt.x += o.vel.x * lead * 0.7; tgt.z += o.vel.z * lead * 0.7;
-  clampBounds(tgt);
+  clampBounds(tgt, g);
   // A bank shot: aim at the target's mirror image in one wall (or the ceiling).
   if (Math.random() < 0.35) {
     const a = AXES[Math.floor(Math.random() * 3)], hi = a === 'y' || Math.random() < 0.5;
-    tgt[a] = 2 * (hi ? BMAX : BMIN)[a] - tgt[a];
+    tgt[a] = 2 * (hi ? g.max : g.min)[a] - tgt[a];
   }
   d.vel.subVectors(tgt, hand).normalize();
   d.vel.x += gauss() * 0.045; d.vel.y += gauss() * 0.03; d.vel.z += gauss() * 0.045;
@@ -2689,7 +3302,7 @@ function exFighter(m, f, o, dt, live) {
   if (live) {
     f.strafeT -= dt;
     if (f.strafeT <= 0) { f.strafe *= -1; f.strafeT = rand(0.7, 2.4); f.prefDist = rand(7, 13); }
-    const tx = dx / dist, tz = dz / dist, radial = clamp((dist - f.prefDist) / 4, -1, 1), lx = HALF_X - 3, lz = HALF_Z - 3;
+    const tx = dx / dist, tz = dz / dist, radial = clamp((dist - f.prefDist) / 4, -1, 1), lx = m.g.hx - 3, lz = m.g.hz - 3;
     let wx = -tz * f.strafe * 0.85 + tx * radial, wz = tx * f.strafe * 0.85 + tz * radial;
     wx += Math.max(0, -lx - f.pos.x) - Math.max(0, f.pos.x - lx);
     wz += Math.max(0, -lz - f.pos.z) - Math.max(0, f.pos.z - lz);
@@ -2724,7 +3337,7 @@ function exFighter(m, f, o, dt, live) {
   f.vel.y -= GRAV * dt;
   f.pos.addScaledVector(f.vel, dt);
   if (f.pos.y <= 0) { f.pos.y = 0; f.vel.y = Math.max(0, f.vel.y); f.onGround = true; } else f.onGround = false;
-  f.pos.x = clamp(f.pos.x, -(HALF_X - PLAYER_R), HALF_X - PLAYER_R); f.pos.z = clamp(f.pos.z, -(HALF_Z - PLAYER_R), HALF_Z - PLAYER_R);
+  f.pos.x = clamp(f.pos.x, -(m.g.hx - PLAYER_R), m.g.hx - PLAYER_R); f.pos.z = clamp(f.pos.z, -(m.g.hz - PLAYER_R), m.g.hz - PLAYER_R);
   f.throwAnim = Math.max(0, f.throwAnim - dt);
   f.dashCd = Math.max(0, f.dashCd - dt);
   f.blockT = Math.max(0, f.blockT - dt); f.blockCd = Math.max(0, f.blockCd - dt);
@@ -2742,14 +3355,9 @@ function exDisc(m, owner, dt) {
       if (dist < 1.5 || d.returnT > 3.5) { d.state = 0; break; }
       d.vel.lerp(r.multiplyScalar(RETURN_SPEED / dist), 1 - Math.exp(-7 * h));
     }
+    const px = d.pos.x, pz = d.pos.z;
     d.pos.addScaledVector(d.vel, h);
-    for (const a of AXES) {
-      const lo = d.pos[a] < BMIN[a], hi = d.pos[a] > BMAX[a];
-      if (!lo && !hi) continue;
-      d.pos[a] = 2 * (hi ? BMAX : BMIN)[a] - d.pos[a];
-      d.vel[a] = hi ? -Math.abs(d.vel[a]) : Math.abs(d.vel[a]);
-      if (d.state === 1 && ++d.bounces >= MAX_BOUNCES) { d.state = 2; d.returnT = 0; }
-    }
+    bounceBall(m.g, d.pos, d.vel, px, pz, exBounce, d);
     const vi = d.state === 1 ? d.target : 1 - owner, v = m.f[vi];
     if (v.invuln > 0) continue;
     const y = clamp(d.pos.y, v.pos.y + 0.35, v.pos.y + 1.8), dist = Math.hypot(d.pos.x - v.pos.x, d.pos.y - y, d.pos.z - v.pos.z);
@@ -2771,6 +3379,7 @@ function exDisc(m, owner, dt) {
   }
   if (d.state === 1 && d.life > 4.5) { d.state = 2; d.returnT = 0; }
 }
+function exBounce(d) { if (d.state === 1 && ++d.bounces >= MAX_BOUNCES) { d.state = 2; d.returnT = 0; } }
 function exPack(m) {
   const pf = f => [r2(f.pos.x), r2(f.pos.y), r2(f.pos.z), r3(f.yaw), r2(f.vel.x), r2(f.vel.z),
     r2(f.charging ? Math.min(1, f.chargeT / CHARGE_T) : 0), r2(f.blockT), r2(f.throwAnim), r2(f.flash), r2(f.invuln), f.disc.state === 0 ? 1 : 0];
@@ -2791,11 +3400,7 @@ function exSim(m, dt) {
     if (++m.tick % DIGEST_EVERY === 0) { m.buf.push(exPack(m)); if (m.buf.length > 5) m.buf.shift(); }
   }
 }
-// Fold a straight-line position back into the cube, as the bounces would.
-function foldAxis(v, lo, hi) {
-  const L = 2 * (hi - lo), u = (((v - lo) % L) + L) % L;
-  return u <= L / 2 ? lo + u : lo + L - u;
-}
+const exVel = new V3();
 function exDraw(m, dt) {
   const buf = m.buf;
   if (buf.length < 2) return;
@@ -2815,10 +3420,8 @@ function exDraw(m, dt) {
     v.disc.state = fb[11] || !da[0] ? 'held' : 'flying';
     fighterVisual(v, dt);
     if (!da[0] || !db[0]) { dv.mesh.visible = dv.trail.visible = false; dv.wasHeld = true; continue; }
-    if (da[0] === 1 && db[0] === 1) {
-      const e = vt - a.t;
-      for (let j = 0; j < 3; j++) dv.pos.setComponent(j, foldAxis(da[1 + j] + da[4 + j] * e, BMIN.getComponent(j), BMAX.getComponent(j)));
-    } else dv.pos.set(da[1] + (db[1] - da[1]) * k, da[2] + (db[2] - da[2]) * k, da[3] + (db[3] - da[3]) * k);
+    if (da[0] === 1 && db[0] === 1) extrapolate(m.g, dv.pos.set(da[1], da[2], da[3]), exVel.set(da[4], da[5], da[6]), vt - a.t);
+    else dv.pos.set(da[1] + (db[1] - da[1]) * k, da[2] + (db[2] - da[2]) * k, da[3] + (db[3] - da[3]) * k);
     dv.mesh.visible = dv.trail.visible = true;
     dv.spin += dt;
     dv.mesh.position.copy(dv.pos);
@@ -2882,7 +3485,13 @@ function stadiumUpdate(dt) {
     v.m.group.visible = settings.stadium && v.live;
     if (v.m.group.visible) { v.m.t = performance.now() / 1000; v.m.acc = 0; exDraw(v.m, dt); }
   }
+  // An empty classic cube drawn where a match on another map is showing would cut across it: leave those out.
+  const skip = new Set();
+  for (const v of hub.views) if (v.m.group.visible && v.m.g.key !== 'classic') skip.add(v.m.slotKey);
+  const key = [...skip].sort().join(';');
+  if (key !== decoSkip) { decoSkip = key; buildStadiumDeco(skip); }
 }
+let decoSkip = '';
 
 // ---------- Stadium hub: real matches in the neighboring cubes ----------
 // Phase 1 of docs/stadium-design.md, on the public site only (the claude.ai sandbox can't reach the hub).
@@ -2958,7 +3567,8 @@ function hubDigest() {
     t: 0, clock: r2(Math.max(0, state.time)), sc: [player.dmg, cpu.dmg], hs: hub.hitSeq, hit: hub.lastHit,
     f: [pf(player), pf(cpu)], d: [pd(player.disc), pd(cpu.disc)],
     n: [playerName(), online ? (net.oppName || 'Rival') : 'CPU'],
-    lb: online ? 'LIVE · ONLINE' : 'LIVE · ' + state.diff.toUpperCase() + ' CPU',
+    lb: (online ? 'LIVE · ONLINE' : 'LIVE · ' + state.diff.toUpperCase() + ' CPU') + (mapKey === 'classic' ? '' : ' · ' + MAPS[mapKey].name.toUpperCase()),
+    mp: mapKey,
   };
 }
 // One match's digest from the hub, at stadium slot [x, y, z]. Everything in it came from another player: clean it.
@@ -2981,8 +3591,10 @@ function hubReceive(e) {
     n: arr(s.n, 2) ? [cleanName(s.n[0]) || 'Player', cleanName(s.n[1]) || 'Player'] : null,
     lb: typeof s.lb === 'string' ? s.lb.replace(/[^A-Z0-9 ·-]/g, '').slice(0, 24) : 'LIVE',
   };
-  for (const v of clean.f) { v[0] = clamp(v[0], -HALF_X, HALF_X); v[1] = clamp(v[1], 0, CEIL); v[2] = clamp(v[2], -HALF_Z, HALF_Z); }
-  for (const v of clean.d) { v[0] = clamp(Math.round(v[0]), 0, 2); for (const j of [1, 2, 3]) v[j] = clamp(v[j], BMIN.getComponent(j - 1), BMAX.getComponent(j - 1)); }
+  // Its map (a page from before maps existed sends none: classic).
+  const g = GEOS[isMap(s.mp) ? s.mp : 'classic'];
+  for (const v of clean.f) { v[0] = clamp(v[0], -g.hx, g.hx); v[1] = clamp(v[1], 0, CEIL); v[2] = clamp(v[2], -g.hz, g.hz); }
+  for (const v of clean.d) { v[0] = clamp(Math.round(v[0]), 0, 2); for (const j of [1, 2, 3]) v[j] = clamp(v[j], g.min.getComponent(j - 1), g.max.getComponent(j - 1)); }
   const key = rel.join(',');
   let v = hub.views.find(x => x.m.slotKey === key && x.matchSlot === slot.join(','));
   if (!v) {
@@ -2999,6 +3611,7 @@ function hubReceive(e) {
     v.m.buf = []; v.m.hitSeen = clean.hs; v.m.board.key = '';
     v.matchSlot = slot.join(',');
   }
+  exhibitMap(v.m, g.key);
   v.live = true; v.seen = performance.now();
   v.m.buf.push(clean);
   if (v.m.buf.length > 6) v.m.buf.shift();
@@ -3023,7 +3636,8 @@ function frame(now) {
 }
 // One step of the game. `render` is false for the background ticks below.
 function tick(now, render) {
-  const dt = Math.min(0.033, Math.max(0, (now - last) / 1000));
+  const frameMs = now - last;
+  const dt = Math.min(0.033, Math.max(0, frameMs / 1000));
   last = now;
   if (net.match && state.mode !== 'lobby') {
     netStep(dt);
@@ -3049,7 +3663,10 @@ function tick(now, render) {
   // The guest draws shards from the host's snapshot inside netStep; everyone else from the local sim.
   if (net.role !== 'guest') drawShards(state.mode === 'playing' || state.mode === 'paused' || state.mode === 'menu' || state.mode === 'results' ? localShardList() : []);
   updateHUD(dt);
+  const q = perfBegin();
   if (composer && settings.bloom) composer.render(); else renderer.render(scene, camera);
+  perfEnd(q);
+  perfFrame(now, frameMs);
 }
 // A hidden tab gets no animation frames, which would freeze an online match for both players.
 // A tiny worker keeps a 30 Hz beat going (worker timers aren't throttled like the page's), so the
