@@ -33,7 +33,7 @@ Default keys; every key can be changed in **Settings & controls**.
 | Input | Action |
 | --- | --- |
 | Mouse | Aim (click the arena to capture the cursor). The crosshair turns orange on your opponent |
-| Hold left click | Wind up, release to throw. A tap throws at 30 m/s, a full 0.8 s wind-up at 46 m/s |
+| Hold left click | Wind up, release to throw. A tap throws at 37.5 m/s, a full 0.8 s wind-up at 57.5 m/s. Getting hit doesn't cancel a wind-up: you're slowed for a moment instead |
 | Flick the mouse as you release | Curves the throw that way; most of the spin is lost at the first wall |
 | Left click (disc in flight) | Recall the disc |
 | Right click / Q | Shield, reflects a disc back at its thrower (disc must be in hand) |
@@ -47,7 +47,7 @@ Default keys; every key can be changed in **Settings & controls**.
 
 ## Special discs
 
-Each recharges for 7 s after use.
+Heavy recharges for 9 s after use, Split for 7 s.
 
 - **Heavy (E):** about 28% slower and much bigger, +10 damage, and a shield can't reflect it.
 - **Split (R):** at its first wall bounce it throws off two shards that live about 1.3 s and hit for 8 each.
