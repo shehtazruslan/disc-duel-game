@@ -9,7 +9,7 @@ A 1v1 disc-throwing duel in a neon arena with 9 m glass walls. Discs ricochet of
 Pick the map on the menu. Online, the host's map is used.
 
 - **Classic:** a 22 × 32 m rectangle.
-- **Plus:** a plus-shaped arena, 14 m wide arms and 36 m tip to tip. Discs can't pass the glass corners, so they're cover; bank shots (and the CPU) reach around them.
+- **Plus:** a plus-shaped arena, 14 m wide arms and 58 m tip to tip. Discs can't pass the glass corners, so they're cover; bank shots (and the CPU) reach around them.
 
 ## Modes
 
@@ -56,8 +56,12 @@ Each recharges for 7 s after use.
 
 - **Mouse sensitivity** as a multiplier or in cm/360° (enter your mouse DPI). The game asks for raw mouse input, so cm/360° is exact in Chrome and Edge.
 - **Field of view** (horizontal, first person) and **effects volume**.
-- **Graphics:** neon glow on/off, floor reflections on/off, matches in the neighboring arenas on/off, and a Fast resolution for slower computers (it also drops the fighters' shadows).
+- **Graphics:** neon glow on/off, floor reflections on/off, ambient occlusion (soft shading where things meet; off by default), matches in the neighboring arenas on/off, and a Fast resolution for slower computers (it also drops the fighters' shadows and the shading).
 - **Show frame rate:** frames per second, frame times and, where the browser allows it, how long the graphics card takes per frame.
+
+## Look
+
+Discs leave glowing light trails. Every bounce throws sparks, flashes light onto the walls and floor, and sends a ripple of light through the arena's grid, while pulses of light run along the grid lines; a hit bursts a shockwave off the fighter.
 
 ## Sound
 

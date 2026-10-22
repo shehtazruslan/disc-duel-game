@@ -349,6 +349,7 @@ button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       <h3>Graphics</h3>
       <label class="check" for="setBloom"><input type="checkbox" id="setBloom"> Neon glow</label>
       <label class="check" for="setMirror"><input type="checkbox" id="setMirror"> Floor reflections</label>
+      <label class="check" for="setAo"><input type="checkbox" id="setAo"> Ambient occlusion (soft shading where things meet; needs the glow, off on Fast)</label>
       <label class="check" for="setStadium"><input type="checkbox" id="setStadium"> Matches in the neighboring arenas</label>
       <label class="slider" for="setQuality">Resolution <select id="setQuality"><option value="high">Sharp</option><option value="low">Fast</option></select></label>
       <p class="sens-note">Turning off the glow, the floor reflections and the neighboring matches, or choosing Fast (which also drops shadows), helps on slower computers.</p>
@@ -465,21 +466,22 @@ const r2 = v => Math.round(v * 100) / 100;
 // A map is a floor outline inside a bounding box (hx, hz are its half sizes); the rest of the box is solid,
 // full-height blocks, each [x0, x1, z0, z1]. Every wall is axis-aligned, so a disc bounces off a block face
 // exactly as it does off an outer wall. All walls are glass: blocks stop discs, not your view.
-const PLUS_ARM = 7, PLUS_END = 18;
+const PLUS_ARM = 7, PLUS_END = 29;
 const MAPS = {
   classic: {
     name: 'Classic', hx: ARENA_X / 2, hz: ARENA_Z / 2, spawn: 10, orbit: 9.5, blocks: [],
     outline: [[-11, -16], [11, -16], [11, 16], [-11, 16]],
     eyebrow: '1v1 · 22 × 32 m arena · 9 m walls · discs ricochet', note: '',
   },
-  // 14 m wide arms, 36 m tip to tip. The corners are cover from discs; bank shots reach around them.
+  // 14 m wide arms reaching 22 m out from the middle square, 58 m tip to tip. The corners are cover from discs;
+  // bank shots reach around them.
   plus: {
     name: 'Plus', hx: PLUS_END, hz: PLUS_END, spawn: 11, orbit: 8.5,
     blocks: [[PLUS_ARM, PLUS_END, PLUS_ARM, PLUS_END], [-PLUS_END, -PLUS_ARM, PLUS_ARM, PLUS_END],
       [PLUS_ARM, PLUS_END, -PLUS_END, -PLUS_ARM], [-PLUS_END, -PLUS_ARM, -PLUS_END, -PLUS_ARM]],
     outline: [[-PLUS_ARM, -PLUS_END], [PLUS_ARM, -PLUS_END], [PLUS_ARM, -PLUS_ARM], [PLUS_END, -PLUS_ARM], [PLUS_END, PLUS_ARM], [PLUS_ARM, PLUS_ARM],
       [PLUS_ARM, PLUS_END], [-PLUS_ARM, PLUS_END], [-PLUS_ARM, PLUS_ARM], [-PLUS_END, PLUS_ARM], [-PLUS_END, -PLUS_ARM], [-PLUS_ARM, -PLUS_ARM]],
-    eyebrow: '1v1 · plus-shaped arena, 36 m across · 9 m walls', note: 'Discs can\'t pass the glass corners. Bank shots reach around them.',
+    eyebrow: '1v1 · plus-shaped arena, 58 m across · 9 m walls', note: 'Discs can\'t pass the glass corners. Bank shots reach around them.',
   },
 };
 // Map names arrive from other players too: only our own keys count (never 'constructor' and the like).
@@ -633,7 +635,7 @@ const net = {
 // ---------- Settings (saved in this browser) ----------
 const DEFAULT_BINDS = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', jump: 'Space', dash: 'ShiftLeft', slide: 'KeyC', shield: 'KeyQ', heavy: 'KeyE', split: 'KeyR', view: 'KeyV', mute: 'KeyM' };
 const BIND_LABELS = [['forward', 'Move forward'], ['back', 'Move back'], ['left', 'Move left'], ['right', 'Move right'], ['jump', 'Jump'], ['dash', 'Dash'], ['slide', 'Slide'], ['shield', 'Shield'], ['heavy', 'Arm Heavy disc'], ['split', 'Arm Split disc'], ['view', 'Switch view'], ['mute', 'Mute']];
-const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', fps: false, mirror: true, binds: Object.assign({}, DEFAULT_BINDS) };
+const settings = { fov: 103, sfx: 0.8, bloom: true, stadium: true, quality: 'high', fps: false, mirror: true, ao: false, binds: Object.assign({}, DEFAULT_BINDS) };
 try {
   const saved = JSON.parse(localStorage.getItem('discduel.settings') || 'null');
   if (saved && typeof saved === 'object') {
@@ -643,6 +645,7 @@ try {
     if (typeof saved.stadium === 'boolean') settings.stadium = saved.stadium;
     if (typeof saved.fps === 'boolean') settings.fps = saved.fps;
     if (typeof saved.mirror === 'boolean') settings.mirror = saved.mirror;
+    if (typeof saved.ao === 'boolean') settings.ao = saved.ao;
     if (saved.quality === 'low' || saved.quality === 'high') settings.quality = saved.quality;
     if (saved.binds && typeof saved.binds === 'object') for (const k in DEFAULT_BINDS) if (typeof saved.binds[k] === 'string' && saved.binds[k]) settings.binds[k] = saved.binds[k];
   }
@@ -665,20 +668,24 @@ const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 2
 // by the main camera: the floor's mirror, the reflection capture and the shadows leave them out.
 const LAYER_STADIUM = 1, LAYER_VIEW = 2;
 camera.layers.enable(LAYER_STADIUM); camera.layers.enable(LAYER_VIEW);
+// Things ambient occlusion shades against (the arena's surfaces and the fighters) are also on this layer.
+const AO_LAYER = 4;
 
 // With the glow on, the scene renders into an anti-aliased (multisampled) half-float buffer, so neon brighter than
 // white survives to the last step (FilmShader), which burns it toward white with a coloured halo, the way film does.
 // Without float buffers it falls back to an ordinary one and the neon keeps its plain colours (see hot()).
 const HDR = renderer.capabilities.isWebGL2 && renderer.extensions.has('EXT_color_buffer_float');
 const FilmShader = {
-  uniforms: { tDiffuse: { value: null }, vignette: { value: 0.22 } },
+  uniforms: { tDiffuse: { value: null }, vignette: { value: 0.22 }, tAO: { value: null }, aoAmount: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tDiffuse; uniform float vignette; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float vignette; uniform sampler2D tAO; uniform float aoAmount; varying vec2 vUv;
     void main() {
       vec3 c = texture2D(tDiffuse, vUv).rgb;
-      // The hottest neon loses its colour toward white at the core.
       float peak = max(c.r, max(c.g, c.b));
+      // Ambient occlusion shades surfaces, not light: bright neon keeps its full strength.
+      if (aoAmount > 0.0) c *= mix(1.0, texture2D(tAO, vUv).r, aoAmount * (1.0 - smoothstep(1.0, 2.5, peak)));
+      // The hottest neon loses its colour toward white at the core.
       c = mix(c, vec3(peak), 0.7 * smoothstep(1.0, 3.0, peak));
       // A soft shoulder: unchanged up to 0.6, then rolling off toward white instead of clipping.
       vec3 k = vec3(0.6);
@@ -687,7 +694,7 @@ const FilmShader = {
       gl_FragColor = vec4(c * (1.0 - vignette * dot(d, d) * 1.6), 1.0);
     }`,
 };
-let composer = null, bloom = null;
+let composer = null, bloom = null, filmPass = null;
 if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
   try {
     const pr = renderer.getPixelRatio();
@@ -699,8 +706,98 @@ if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
     composer.addPass(new THREE.RenderPass(scene, camera));
     bloom = new THREE.UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.45, 0.25);
     composer.addPass(bloom);
-    if (HDR) composer.addPass(new THREE.ShaderPass(FilmShader));
+    if (HDR) { filmPass = new THREE.ShaderPass(FilmShader); composer.addPass(filmPass); }
   } catch (e) { composer = null; }
+}
+
+// ---------- Ambient occlusion (Settings → Ambient occlusion: off by default; glow on, not on Fast) ----------
+// In this dark neon look it's subtle (bright neon is left alone), so it isn't worth its extra pass unless you want it.
+// Soft shade where things meet: under and around the fighters, along the foot of every wall. The arena and the
+// fighters (AO_LAYER) are drawn once more at half resolution as depth and surface direction; a shader samples a small
+// hemisphere around each point to see how enclosed it is, a blur smooths that, and FilmShader darkens the picture by it.
+const ao = { cam: new THREE.PerspectiveCamera(), normals: null, raw: null, soft: null, quad: null, mat: null, blurMat: null, normalMat: new THREE.MeshNormalMaterial() };
+if (filmPass && THREE.FullScreenQuad) {
+  ao.normals = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat });
+  ao.normals.depthTexture = new THREE.DepthTexture();
+  ao.normals.depthTexture.type = THREE.UnsignedIntType;
+  ao.raw = new THREE.WebGLRenderTarget(1, 1, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat });
+  ao.soft = ao.raw.clone();
+  // A 4 × 4 tile of random turns, so neighbouring pixels sample different directions (the blur evens them out).
+  const noise = new Uint8Array(4 * 4 * 4);
+  for (let i = 0; i < 16; i++) { noise[i * 4] = Math.random() * 255; noise[i * 4 + 1] = Math.random() * 255; noise[i * 4 + 2] = 0; noise[i * 4 + 3] = 255; }
+  const noiseTex = new THREE.DataTexture(noise, 4, 4, THREE.RGBAFormat);
+  noiseTex.wrapS = noiseTex.wrapT = THREE.RepeatWrapping;
+  // 16 directions in a hemisphere, more of them close in.
+  const kernel = Array.from({ length: 16 }, (_, i) => {
+    const s = (i + 1) / 16;
+    return new V3(Math.random() * 2 - 1, Math.random() * 2 - 1, 0.15 + Math.random() * 0.85).normalize().multiplyScalar(0.15 + 0.85 * s * s);
+  });
+  const quadVert = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+  ao.mat = new THREE.ShaderMaterial({
+    uniforms: { tNormal: { value: ao.normals.texture }, tDepth: { value: ao.normals.depthTexture }, tNoise: { value: noiseTex }, kernel: { value: kernel },
+      proj: { value: new THREE.Matrix4() }, invProj: { value: new THREE.Matrix4() }, radius: { value: 0.7 }, resolution: { value: new THREE.Vector2() } },
+    vertexShader: quadVert,
+    fragmentShader: `
+      #include <packing>
+      uniform sampler2D tNormal; uniform sampler2D tDepth; uniform sampler2D tNoise; uniform vec3 kernel[16];
+      uniform mat4 proj; uniform mat4 invProj; uniform float radius; uniform vec2 resolution; varying vec2 vUv;
+      vec3 viewPos(vec2 uv) {
+        vec4 v = invProj * vec4(vec3(uv, texture2D(tDepth, uv).x) * 2.0 - 1.0, 1.0);
+        return v.xyz / v.w;
+      }
+      void main() {
+        if (texture2D(tDepth, vUv).x >= 1.0) { gl_FragColor = vec4(1.0); return; }
+        vec3 P = viewPos(vUv), N = unpackRGBToNormal(texture2D(tNormal, vUv).xyz);
+        vec3 r = vec3(texture2D(tNoise, vUv * resolution / 4.0).xy * 2.0 - 1.0, 0.0);
+        vec3 T = normalize(r - N * dot(r, N)), B = cross(N, T);
+        mat3 tbn = mat3(T, B, N);
+        float occ = 0.0;
+        for (int i = 0; i < 16; i++) {
+          vec3 S = P + tbn * kernel[i] * radius;
+          vec4 o = proj * vec4(S, 1.0);
+          float sceneZ = viewPos(o.xy / o.w * 0.5 + 0.5).z;
+          // Behind something nearer the camera, and only if that something is close by.
+          occ += (sceneZ >= S.z + 0.03 ? 1.0 : 0.0) * smoothstep(0.0, 1.0, radius / abs(P.z - sceneZ));
+        }
+        gl_FragColor = vec4(vec3(1.0 - occ / 16.0), 1.0);
+      }`,
+  });
+  ao.blurMat = new THREE.ShaderMaterial({
+    uniforms: { tDiffuse: { value: ao.raw.texture }, resolution: { value: new THREE.Vector2() } },
+    vertexShader: quadVert,
+    fragmentShader: `
+      uniform sampler2D tDiffuse; uniform vec2 resolution; varying vec2 vUv;
+      void main() {
+        float sum = 0.0;
+        for (int i = -2; i <= 1; i++) for (int j = -2; j <= 1; j++) sum += texture2D(tDiffuse, vUv + (vec2(i, j) + 0.5) / resolution).r;
+        gl_FragColor = vec4(vec3(sum / 16.0), 1.0);
+      }`,
+  });
+  ao.quad = new THREE.FullScreenQuad(null);
+  filmPass.uniforms.tAO.value = ao.soft.texture;
+}
+const aoOn = () => !!ao.normals && settings.bloom && settings.ao && settings.quality !== 'low';
+function sizeAO() {
+  if (!ao.normals) return;
+  const s = renderer.getDrawingBufferSize(new THREE.Vector2()).multiplyScalar(0.5).floor();
+  for (const t of [ao.normals, ao.raw, ao.soft]) t.setSize(s.x, s.y);
+  ao.mat.uniforms.resolution.value.copy(s); ao.blurMat.uniforms.resolution.value.copy(s);
+}
+sizeAO();
+function renderAO() {
+  camera.updateMatrixWorld();
+  ao.cam.copy(camera, false);
+  ao.cam.layers.set(AO_LAYER);
+  const shadows = renderer.shadowMap.autoUpdate, bg = scene.background;
+  renderer.shadowMap.autoUpdate = false; scene.background = null; scene.overrideMaterial = ao.normalMat;
+  renderer.setRenderTarget(ao.normals);
+  renderer.render(scene, ao.cam);
+  scene.overrideMaterial = null; scene.background = bg; renderer.shadowMap.autoUpdate = shadows;
+  ao.mat.uniforms.proj.value.copy(camera.projectionMatrix);
+  ao.mat.uniforms.invProj.value.copy(camera.projectionMatrixInverse);
+  ao.quad.material = ao.mat; renderer.setRenderTarget(ao.raw); ao.quad.render(renderer);
+  ao.quad.material = ao.blurMat; renderer.setRenderTarget(ao.soft); ao.quad.render(renderer);
+  renderer.setRenderTarget(null);
 }
 // Neon brighter than white (k times its colour). Only the glow's half-float path can show it; anywhere else it would
 // just clip to white, so the colour is scaled up only while that path is in use.
@@ -722,7 +819,9 @@ const CELL = 1.375;
 // it runs), so lines fall on whole cells from the arena's centre and carry on across neighbouring panels.
 // Without it, lines count from the panel's own edges.
 function gridTexture(wUnits, hUnits, fill = '#04070e', at = null) {
-  const ppu = 1024 / Math.max(wUnits, hUnits), W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
+  // About 1024 px along the longer side, but at least 28 px a metre (up to 2048 px) so a big floor's lines stay crisp.
+  const ppu = Math.max(1024, Math.min(2048, 28 * Math.max(wUnits, hUnits))) / Math.max(wUnits, hUnits);
+  const W = Math.round(wUnits * ppu), H = Math.round(hUnits * ppu);
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const g = c.getContext('2d');
@@ -754,9 +853,33 @@ function gridTexture(wUnits, hUnits, fill = '#04070e', at = null) {
   t.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return t;
 }
-const roomMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, envMapIntensity: 0.8 });
+// The arena is alive: light pulses run along the grid lines, and every bounce sends a ripple of light through the floor
+// and walls (ripple() records where and when; the shader brightens the grid's lines as each ring passes).
+const arenaFx = { uTime: { value: 0 }, uRipples: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, -50, 0, -100)) }, next: 0 };
+function ripple(pos) {
+  arenaFx.uRipples.value[arenaFx.next].set(pos.x, pos.y, pos.z, arenaFx.uTime.value);
+  arenaFx.next = (arenaFx.next + 1) % arenaFx.uRipples.value.length;
+}
+function livingArena(mat) {
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uTime = arenaFx.uTime; sh.uniforms.uRipples = arenaFx.uRipples;
+    sh.vertexShader = 'varying vec3 vArenaPos;\n' + sh.vertexShader.replace('#include <project_vertex>',
+      '#include <project_vertex>\n  vArenaPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = 'uniform float uTime;\nuniform vec4 uRipples[6];\nvarying vec3 vArenaPos;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      float boost = 1.2 * pow(max(0.0, sin(vArenaPos.x * 0.18 - uTime * 2.1)), 24.0) + 1.2 * pow(max(0.0, sin(vArenaPos.z * 0.15 + uTime * 1.7)), 24.0);
+      for (int i = 0; i < 6; i++) {
+        float age = uTime - uRipples[i].w;
+        if (age < 0.0 || age > 1.6) continue;
+        float ring = length(vArenaPos - uRipples[i].xyz) - age * 14.0;
+        boost += 3.0 * exp(-ring * ring * 4.0) * (1.0 - age / 1.6);
+      }
+      totalEmissiveRadiance *= 1.0 + boost;`);
+  };
+  return mat;
+}
+const roomMat = tex => livingArena(new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.35, envMapIntensity: 0.8 }));
 // Walls and ceiling are glass: neon lines stay bright, the panels between them let you see out.
-const glassMat = tex => new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, envMapIntensity: 0.6, transparent: true, depthWrite: false });
+const glassMat = tex => livingArena(new THREE.MeshStandardMaterial({ map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1, envMapIntensity: 0.6, transparent: true, depthWrite: false }));
 const GLASS_FILL = 'rgba(6, 14, 26, 0.28)';
 
 // A map's floor (or ceiling) shape, with UVs across its bounding box so a grid texture lines up with the walls.
@@ -818,6 +941,8 @@ function buildArena(def) {
   shadowCatcher = new THREE.Mesh(outlineShape(def, false), new THREE.ShadowMaterial({ opacity: 0.5, depthWrite: false }));
   shadowCatcher.position.y = 0.004; shadowCatcher.receiveShadow = true; shadowCatcher.renderOrder = -1;
   shadowCatcher.visible = settings.quality !== 'low';
+  // Floor, walls and ceiling are what ambient occlusion shades against.
+  for (const o of arena.children) if (o.isMesh) o.layers.enable(AO_LAYER);
   arena.add(shadowCatcher);
   scene.add(arena);
   setMirror(settings.mirror);
@@ -885,6 +1010,9 @@ function captureEnv() {
 // Neighboring arenas, side by side and stacked like a stadium of cubes, seen through the glass. They're spaced to fit
 // the largest map. A few run exhibition matches or real ones (see "Stadium" below); the rest are empty for now.
 const GAP_X = Math.max(...Object.values(MAPS).map(m => m.hx * 2)) + 10, GAP_Z = Math.max(...Object.values(MAPS).map(m => m.hz * 2)) + 10, GAP_Y = CEIL + 8;
+// The fog thins out to match, so the cubes two along are still a faint outline.
+scene.fog.near = 40; scene.fog.far = 2 * Math.max(GAP_X, GAP_Z) + 40;
+camera.far = scene.fog.far + 40; camera.updateProjectionMatrix();
 // The empty classic cubes, drawn in one go. A cube holding a match on another map is left out (`skip`: slot keys).
 let stadiumDeco = null;
 function buildStadiumDeco(skip) {
@@ -911,11 +1039,16 @@ const decoFloorMat = new THREE.MeshBasicMaterial({ map: gridTexture(ARENA_X, ARE
   blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
 buildStadiumDeco(new Set());
 // Switch maps: the walls the game collides with, and the arena you see. Fighters are placed by the caller.
-function setMap(key) {
-  if (!isMap(key)) key = 'classic';
-  mapKey = key; G = GEOS[key];
-  buildArena(MAPS[key]);
+function setMap(id) {
+  if (!isMap(id)) id = 'classic';
+  mapKey = id; G = GEOS[id];
+  buildArena(MAPS[id]);
   captureEnv();
+  // Shadows cover this map: the light's box sized to it, and the light far enough out to see all of it.
+  const e = Math.max(G.hx, G.hz) * 1.5;
+  key.position.set(12, 16, 16).setLength(e * 1.2);
+  Object.assign(key.shadow.camera, { left: -e, right: e, top: e, bottom: -e, near: 1, far: e * 2.6 });
+  key.shadow.camera.updateProjectionMatrix();
 }
 // floor center emblem
 for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
@@ -924,13 +1057,10 @@ for (const [r, o] of [[2.5, 0.5], [2.8, 0.25], [7.5, 0.18]]) {
 }
 scene.add(new THREE.AmbientLight(0x3a5a90, 0.55));
 scene.add(new THREE.HemisphereLight(0x6c8cff, 0x080a14, 0.45));
-// The key light also casts the fighters' (and discs') shadows, over the whole of the largest map. Off on Fast.
+// The key light also casts the fighters' (and discs') shadows over the whole map (fitted in setMap). Off on Fast.
 const key = new THREE.DirectionalLight(0xbfdcff, 0.45);
-key.position.set(12, 16, 16);
 key.castShadow = settings.quality !== 'low';
 key.shadow.mapSize.set(2048, 2048);
-Object.assign(key.shadow.camera, { left: -27, right: 27, top: 27, bottom: -27, near: 1, far: 60 });
-key.shadow.camera.updateProjectionMatrix();
 key.shadow.bias = -0.0004;
 scene.add(key);
 // The map chosen on the menu (an online guest plays the host's instead).
@@ -1106,7 +1236,7 @@ function makeFighterMesh(color, B = BUILDS.normal) {
   const shieldRim = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 6 }, (_, i) => new V3(Math.cos(i / 6 * Math.PI * 2), Math.sin(i / 6 * Math.PI * 2), 0))), new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0 }));
   shield.add(shieldRim);
   g.add(shield);
-  g.traverse(o => { if (o.isMesh && o !== shield) o.castShadow = true; });
+  g.traverse(o => { if (o.isMesh && o !== shield) { o.castShadow = true; o.layers.enable(AO_LAYER); } });
   scene.add(g);
   // Foot ring + blob shadow, sized to the hitbox so you can read it at a glance.
   const foot = new THREE.Mesh(new THREE.RingGeometry(B.hitR + 0.02, B.hitR + 0.12, 40), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
@@ -1138,22 +1268,63 @@ function makeDisc(owner, color) {
   const light = new THREE.PointLight(color, 1.8, 11, 2);
   light.visible = false;
   scene.add(light);
-  const N = 36;
-  const positions = new Float32Array(N * 3), colors = new Float32Array(N * 3);
+  // The light trail: a ribbon along the disc's recent path (two vertices per point), fading toward its tail.
+  const pos = new Float32Array(TRAIL_N * 6), col = new Float32Array(TRAIL_N * 6), uv = new Float32Array(TRAIL_N * 4), idx = [];
   const c = new THREE.Color(color);
-  for (let i = 0; i < N; i++) {
-    const k = Math.pow(1 - i / (N - 1), 1.6);
-    colors[i * 3] = c.r * k; colors[i * 3 + 1] = c.g * k; colors[i * 3 + 2] = c.b * k;
+  for (let i = 0; i < TRAIL_N; i++) {
+    const k = Math.pow(1 - i / (TRAIL_N - 1), 1.4);
+    for (let s = 0; s < 2; s++) {
+      const j = i * 2 + s;
+      col[j * 3] = c.r * k; col[j * 3 + 1] = c.g * k; col[j * 3 + 2] = c.b * k;
+      uv[j * 2] = i / (TRAIL_N - 1); uv[j * 2 + 1] = s;
+    }
+    if (i < TRAIL_N - 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const trail = new THREE.Line(geo, hot(new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }), 2));
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  const trail = new THREE.Mesh(geo, hot(new THREE.MeshBasicMaterial({ map: trailTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, side: THREE.DoubleSide }), 2));
   trail.frustumCulled = false;
   trail.visible = false;
   scene.add(trail);
-  return { owner, color, mesh, light, trail, trailN: N, pos: new V3(), vel: new V3(), state: 'held', bounces: 0, life: 0, returnT: 0, target: null, credit: null, reflected: false, launchId: 0,
-    kind: 'normal', spin: 0, splitDone: false };
+  return { owner, color, mesh, light, trail, path: new Float32Array(TRAIL_N * 3), pos: new V3(), vel: new V3(), state: 'held', bounces: 0, life: 0, returnT: 0,
+    target: null, credit: null, reflected: false, launchId: 0, kind: 'normal', spin: 0, splitDone: false };
+}
+// Light trails: points are laid down every TRAIL_STEP metres (so the length doesn't depend on the frame rate) and the
+// ribbon through them turns to face the camera, tapering from TRAIL_W wide at the disc to nothing.
+const TRAIL_N = 40, TRAIL_STEP = 0.35, TRAIL_W = 0.32;
+let trailTex = null;
+function trailTexture() {
+  if (trailTex) return trailTex;
+  const c = document.createElement('canvas'); c.width = 4; c.height = 64;
+  const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 64);
+  gr.addColorStop(0, '#000'); gr.addColorStop(0.3, '#2a2a2a'); gr.addColorStop(0.5, '#fff'); gr.addColorStop(0.7, '#2a2a2a'); gr.addColorStop(1, '#000');
+  g.fillStyle = gr; g.fillRect(0, 0, 4, 64);
+  return (trailTex = new THREE.CanvasTexture(c));
+}
+// Start a fresh trail where the disc is now.
+function resetTrail(d) { for (let i = 0; i < TRAIL_N; i++) { d.path[i * 3] = d.pos.x; d.path[i * 3 + 1] = d.pos.y; d.path[i * 3 + 2] = d.pos.z; } }
+function drawTrail(d) {
+  const p = d.path;
+  const dx = d.pos.x - p[3], dy = d.pos.y - p[4], dz = d.pos.z - p[5];
+  if (dx * dx + dy * dy + dz * dz > TRAIL_STEP * TRAIL_STEP) p.copyWithin(3, 0, (TRAIL_N - 1) * 3);
+  p[0] = d.pos.x; p[1] = d.pos.y; p[2] = d.pos.z;
+  const out = d.trail.geometry.attributes.position.array, cam = camera.position;
+  for (let i = 0; i < TRAIL_N; i++) {
+    const a = Math.max(0, i - 1) * 3, b = Math.min(TRAIL_N - 1, i + 1) * 3, o = i * 3;
+    // Across the ribbon: square to the path and to the line of sight.
+    const tx = p[a] - p[b], ty = p[a + 1] - p[b + 1], tz = p[a + 2] - p[b + 2];
+    const vx = p[o] - cam.x, vy = p[o + 1] - cam.y, vz = p[o + 2] - cam.z;
+    let sx = ty * vz - tz * vy, sy = tz * vx - tx * vz, sz = tx * vy - ty * vx;
+    const l = Math.hypot(sx, sy, sz), w = TRAIL_W * 0.5 * (1 - i / (TRAIL_N - 1));
+    if (l > 1e-6) { sx *= w / l; sy *= w / l; sz *= w / l; } else { sx = 0; sy = w; sz = 0; }
+    out[i * 6] = p[o] + sx; out[i * 6 + 1] = p[o + 1] + sy; out[i * 6 + 2] = p[o + 2] + sz;
+    out[i * 6 + 3] = p[o] - sx; out[i * 6 + 4] = p[o + 1] - sy; out[i * 6 + 5] = p[o + 2] - sz;
+  }
+  d.trail.geometry.attributes.position.needsUpdate = true;
 }
 
 function makeFighter(name, color, isCPU) {
@@ -1194,6 +1365,114 @@ function updateRings(dt) {
     r.mesh.scale.setScalar(r.size * (1 + 5 * k));
     r.mesh.material.opacity = 1 - k;
   }
+}
+// Sparks: a pool of glowing points thrown off at impacts, falling and bouncing on the floor as they fade.
+const SPARKS = 360;
+const spark = { pos: new Float32Array(SPARKS * 3), col: new Float32Array(SPARKS * 3), vel: new Float32Array(SPARKS * 3), base: new Float32Array(SPARKS * 3),
+  life: new Float32Array(SPARKS), max: new Float32Array(SPARKS), next: 0, busy: 0 };
+const sparkPoints = (() => {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(spark.pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(spark.col, 3));
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d'), gr = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, '#fff'); gr.addColorStop(0.35, 'rgba(255,255,255,0.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 32, 32);
+  const p = new THREE.Points(g, hot(new THREE.PointsMaterial({ size: 0.14, map: new THREE.CanvasTexture(c), vertexColors: true, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false }), 2.5));
+  p.frustumCulled = false;
+  scene.add(p);
+  return p;
+})();
+const sparkCol = new THREE.Color();
+// n sparks from pos, sprayed round the direction dir (spread 0 is a jet, larger is wider), at up to `speed` m/s.
+function burst(pos, dir, color, n, speed, spread = 0.75) {
+  if (reducedMotion) n = Math.ceil(n / 3);
+  sparkCol.set(color);
+  for (let k = 0; k < n; k++) {
+    const i = spark.next, o = i * 3;
+    spark.next = (spark.next + 1) % SPARKS;
+    let x = Math.random() * 2 - 1, y = Math.random() * 2 - 1, z = Math.random() * 2 - 1;
+    const l = Math.hypot(x, y, z) || 1;
+    x = x / l * spread + dir.x; y = y / l * spread + dir.y; z = z / l * spread + dir.z;
+    const s = speed * (0.35 + Math.random() * 0.65) / (Math.hypot(x, y, z) || 1);
+    spark.vel[o] = x * s; spark.vel[o + 1] = y * s; spark.vel[o + 2] = z * s;
+    spark.pos[o] = pos.x; spark.pos[o + 1] = pos.y; spark.pos[o + 2] = pos.z;
+    spark.life[i] = spark.max[i] = 0.3 + Math.random() * 0.45;
+    // Each spark between the colour and white-hot.
+    const w = Math.random() * 0.6;
+    spark.base[o] = sparkCol.r + (1 - sparkCol.r) * w; spark.base[o + 1] = sparkCol.g + (1 - sparkCol.g) * w; spark.base[o + 2] = sparkCol.b + (1 - sparkCol.b) * w;
+  }
+  spark.busy = 0.8;
+}
+function updateSparks(dt) {
+  if (spark.busy <= 0) return;
+  spark.busy -= dt;
+  for (let i = 0; i < SPARKS; i++) {
+    const o = i * 3;
+    if (spark.life[i] <= 0) { spark.col[o] = spark.col[o + 1] = spark.col[o + 2] = 0; continue; }
+    spark.life[i] -= dt;
+    spark.vel[o + 1] -= 12 * dt;
+    spark.pos[o] += spark.vel[o] * dt; spark.pos[o + 1] += spark.vel[o + 1] * dt; spark.pos[o + 2] += spark.vel[o + 2] * dt;
+    if (spark.pos[o + 1] < 0.03) { spark.pos[o + 1] = 0.03; spark.vel[o + 1] *= -0.35; spark.vel[o] *= 0.7; spark.vel[o + 2] *= 0.7; }
+    const k = Math.max(0, spark.life[i] / spark.max[i]);
+    spark.col[o] = spark.base[o] * k; spark.col[o + 1] = spark.base[o + 1] * k; spark.col[o + 2] = spark.base[o + 2] * k;
+  }
+  sparkPoints.geometry.attributes.position.needsUpdate = true;
+  sparkPoints.geometry.attributes.color.needsUpdate = true;
+}
+// Flashes: two lights that briefly light the walls and floor where something hit. They always exist (at zero when
+// idle), so the number of lights, and with it every lit shader, never changes mid-game.
+const flashes = [0, 1].map(() => { const l = new THREE.PointLight(0xffffff, 0, 10, 2); l.userData.peak = 0; scene.add(l); return l; });
+let flashNext = 0;
+function flash(pos, color, strength = 1) {
+  const l = flashes[flashNext];
+  flashNext = (flashNext + 1) % flashes.length;
+  l.position.copy(pos); l.color.set(color);
+  l.userData.peak = l.intensity = 4 * strength;
+}
+function updateFlashes(dt) { for (const l of flashes) l.intensity = Math.max(0, l.intensity - dt * l.userData.peak * 4); }
+// A hit: a shell of light bursting out from the fighter, bright at its rim.
+const shocks = [], shockGeo = new THREE.SphereGeometry(1, 24, 16);
+function shockwave(pos, color) {
+  let s = shocks.find(x => x.t >= x.life);
+  if (!s) {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { color: { value: new THREE.Color() }, opacity: { value: 0 } },
+      vertexShader: 'varying vec3 vN; varying vec3 vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+      fragmentShader: 'uniform vec3 color; uniform float opacity; varying vec3 vN; varying vec3 vV; void main() { float rim = pow(1.0 - abs(dot(vN, vV)), 3.0); gl_FragColor = vec4(color * rim * opacity, 1.0); }',
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    s = { mesh: new THREE.Mesh(shockGeo, mat), t: 0, life: 0 };
+    s.mesh.frustumCulled = false;
+    scene.add(s.mesh); shocks.push(s);
+  }
+  s.mesh.position.copy(pos);
+  s.mesh.material.uniforms.color.value.set(color).multiplyScalar(hotOn() ? 1.2 : 1);
+  s.t = 0; s.life = reducedMotion ? 0 : 0.35; s.mesh.visible = !reducedMotion;
+}
+function updateShocks(dt) {
+  for (const s of shocks) {
+    if (s.t >= s.life) { s.mesh.visible = false; continue; }
+    s.t += dt;
+    const k = Math.min(1, s.t / s.life);
+    s.mesh.scale.setScalar(0.3 + 1.9 * k);
+    s.mesh.material.uniforms.opacity.value = (1 - k) * (1 - k) * 0.55;
+  }
+}
+// The whole impact: sparks, a flash of light and a ripple through the arena. pos is the point of contact, n the way
+// the surface faces (or the way the disc was going, for a hit).
+const fxAt = new V3(), fxDir = new V3();
+function impact(pos, n, color, size = 1) {
+  burst(pos, n, color, Math.round(14 * size), 7 * Math.sqrt(size));
+  flash(fxAt.copy(pos).addScaledVector(n, 0.5), color, size);
+  ripple(pos);
+}
+function hitFx(pos, dir, color) {
+  shockwave(pos, color);
+  burst(pos, dir, color, 30, 9, 1.4);
+  flash(pos, color, 1.6);
+  ripple(pos);
 }
 
 const floatsEl = document.getElementById('floats');
@@ -1404,6 +1683,7 @@ function tryJump(f) {
   f.vel.y = JUMP_V * 0.95;
   f.wallJumpCd = WALLJUMP_CD; f.airDash = false; f.dashT = 0;
   spawnRing(wallAt, tmp2.set(nx, 0, nz), f.color, 1.6, 0.4);
+  burst(wallAt, tmp2, f.color, 8, 4);
   sfx('walljump', f.pos);
 }
 function tryDash(f, dir) {
@@ -1448,8 +1728,7 @@ function throwDisc(f, dir, speed = DISC_SPEED, kind = 'normal', spin = 0) {
   d.target = other(f); d.credit = f; d.launchId++;
   f.throws++;
   f.charging = false; f.chargeT = 0; f.throwAnim = THROW_ANIM;
-  const arr = d.trail.geometry.attributes.position.array;
-  for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+  resetTrail(d);
   netFx('t', d.pos, null, f);
   sfx('throw', d.pos);
 }
@@ -1473,6 +1752,7 @@ function deflect(d, blocker) {
   blocker.blockT = Math.min(blocker.blockT, 0.12);
   blocker.blocks++; d.curved = false;
   spawnRing(d.pos, tmp2, blocker.color, 2.2, 0.35);
+  impact(d.pos, tmp2, blocker.color, 0.8);
   netFx('r', d.pos, tmp2, blocker);
   sfx('block', d.pos);
 }
@@ -1509,6 +1789,7 @@ function applyHit(victim, credit, dmg, label, dirVel, knock, big) {
   floatText(tmp2, label + ' +' + dmg, credit.color);
   netFx('h', tmp2, null, credit, label + ' +' + dmg);
   spawnRing(chestOf(victim, tmp2), tmp.copy(camera.position).sub(tmp2), credit.color, 2.5, 0.4);
+  hitFx(tmp2, fxDir.set(dirVel.x, 0, dirVel.z).normalize(), credit.color);
   if (victim === player) { state.shake = big ? 0.7 : 0.55; state.hurt = 1; }
   sfx('hit', tmp2);
 }
@@ -1518,6 +1799,7 @@ function onBounce(d, axis, wall, n) {
   tmp[axis] = wall + n * 0.03;
   tmp2.set(0, 0, 0); tmp2[axis] = n;
   spawnRing(tmp, tmp2, d.color, 1.4, 0.6);
+  impact(tmp, tmp2, d.color);
   netFx('b', tmp, tmp2, d.owner);
   if (d.state === 'flying') {
     d.spin *= 0.35;
@@ -1575,10 +1857,7 @@ function discVisual(d, dt) {
   d.mesh.rotation.y += dt * 22;
   d.mesh.rotation.z = Math.sin(d.life * 3) * 0.25;
   d.light.position.copy(d.pos);
-  const arr = d.trail.geometry.attributes.position.array;
-  arr.copyWithin(3, 0, (d.trailN - 1) * 3);
-  arr[0] = d.pos.x; arr[1] = d.pos.y; arr[2] = d.pos.z;
-  d.trail.geometry.attributes.position.needsUpdate = true;
+  drawTrail(d);
 }
 
 // ---------- Split shards ----------
@@ -1661,6 +1940,7 @@ function discClash(dt) {
   clashCd = 0.15;
   spawnRing(tmp2.addVectors(a.pos, b.pos).multiplyScalar(0.5), tmp3.copy(camera.position).sub(tmp2), 0xffffff, 2.5, 0.35);
   floatText(tmp2, 'CLASH', 0xffffff);
+  burst(tmp2, fxDir.set(0, 0.3, 0), 0xffffff, 24, 9, 1.3); flash(tmp2, 0xffffff, 1.2);
   netFx('c', tmp2, null, null);
   sfx('clash', tmp2);
 }
@@ -1726,7 +2006,11 @@ function fighterVisual(f, dt) {
     let hx, hz = 0, kx;
     if (sliding) { hx = i ? -0.15 : 0.55; kx = i ? -1.5 : -0.1; }
     else if (air) { hx = i ? -0.3 : 0.7; kx = i ? -0.75 : -1.2; }
-    else { hx = swing * 0.8 * fz; hz = swing * 0.45 * fx; kx = -(0.06 + 1.15 * run * Math.max(0, Math.cos(ph))); }
+    else {
+      hx = swing * 0.8 * fz; hz = swing * 0.45 * fx; kx = -(0.06 + 1.15 * run * Math.max(0, Math.cos(ph)));
+      // Winding up on the spot: a thrower's stance, left foot forward and knees soft.
+      if (f.charging || f.throwAnim > 0) { hx += (i ? -0.28 : 0.32) * (1 - run); kx -= 0.22 * (1 - run); }
+    }
     ease(m.hips[i].rotation, 'x', hx, a);
     ease(m.hips[i].rotation, 'z', hz + side * 0.03, a);
     ease(m.knees[i].rotation, 'x', kx, a);
@@ -1745,7 +2029,7 @@ function fighterVisual(f, dt) {
   // forward; on release it whips through and the shoulders follow.
   const frac = chargeFrac(f);
   if (f.charging) {
-    rx[1] = -(1.9 + 0.7 * frac); rz[1] = 0.35; ex[1] = 1.3 + 0.3 * frac; twist = 0.35 + 0.3 * frac;
+    rx[1] = -(1.5 + 0.5 * frac); rz[1] = 0.75; ex[1] = 1.0 + 0.3 * frac; twist = 0.35 + 0.3 * frac;
     rx[0] = 0.9; rz[0] = -0.15; ex[0] = 0.35;
     ra = 1 - Math.exp(-18 * dt);
   } else if (f.throwAnim > 0) {
@@ -2014,8 +2298,7 @@ function playerRelease() {
     d.vel.copy(dir).multiplyScalar(speed * (kind === 'heavy' ? HEAVY_SPEED : 1));
     d.kind = kind; d.spin = spin;
     d.state = 'flying'; d.life = 0;
-    const arr = d.trail.geometry.attributes.position.array;
-    for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+    resetTrail(d);
     net.predUntil = performance.now() + 700;
     sfx('throw', d.pos);
   } else throwDisc(player, dir, speed, kind, spin);
@@ -2660,7 +2943,7 @@ function applyQuality() {
   renderer.setPixelRatio(pr);
   renderer.setSize(innerWidth, innerHeight);
   if (composer) { if (composer.setPixelRatio) composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight); }
-  resizeMirror();
+  resizeMirror(); sizeAO();
   // Fast also drops the fighters' shadows.
   key.castShadow = settings.quality !== 'low';
   if (shadowCatcher) shadowCatcher.visible = key.castShadow;
@@ -2671,6 +2954,8 @@ function renderSettings() {
   $('setBloom').checked = settings.bloom;
   $('setMirror').checked = settings.mirror;
   $('setMirror').disabled = !THREE.Reflector;
+  $('setAo').checked = settings.ao;
+  $('setAo').disabled = !ao.normals;
   $('setStadium').checked = settings.stadium;
   $('setFps').checked = settings.fps;
   $('setStadium').disabled = !STADIUM;
@@ -2684,6 +2969,7 @@ $('setVol').addEventListener('input', e => {
 });
 $('setBloom').addEventListener('change', e => { settings.bloom = e.target.checked; applyHot(); saveSettings(); });
 $('setMirror').addEventListener('change', e => { settings.mirror = e.target.checked; setMirror(settings.mirror); saveSettings(); });
+$('setAo').addEventListener('change', e => { settings.ao = e.target.checked; saveSettings(); });
 $('setFps').addEventListener('change', e => { settings.fps = e.target.checked; perfShow(); saveSettings(); });
 $('setStadium').addEventListener('change', e => { settings.stadium = e.target.checked; saveSettings(); });
 $('setQuality').addEventListener('change', e => { settings.quality = e.target.value === 'low' ? 'low' : 'high'; applyQuality(); saveSettings(); });
@@ -2768,7 +3054,7 @@ addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
   if (composer) composer.setSize(innerWidth, innerHeight);
-  resizeMirror();
+  resizeMirror(); sizeAO();
 });
 
 // ---------- Online ----------
@@ -3095,8 +3381,7 @@ function remoteDisc(d, pk, age, dt) {
   clampBounds(extrapolate(G, tmp, tmp2.set(num(pk[4]), num(pk[5]), num(pk[6])), age));
   if (d.state === 'held') {
     d.pos.copy(tmp);
-    const arr = d.trail.geometry.attributes.position.array;
-    for (let i = 0; i < d.trailN; i++) { arr[i * 3] = d.pos.x; arr[i * 3 + 1] = d.pos.y; arr[i * 3 + 2] = d.pos.z; }
+    resetTrail(d);
   } else if (d.pos.distanceTo(tmp) > 3) d.pos.copy(tmp);
   else d.pos.lerp(tmp, 1 - Math.exp(-30 * dt));
   d.vel.set(num(pk[4]), num(pk[5]), num(pk[6]));
@@ -3134,16 +3419,17 @@ function playFx(e) {
   const pos = vec(e[2]), nrm = vec(e[3]);
   const col = side === 1 ? player.color : side === 0 ? cpu.color : 0xffffff;
   const text = typeof e[5] === 'string' ? e[5].slice(0, 24) : '';
-  if (type === 'b' && pos && nrm) { spawnRing(pos, nrm, col, 1.4, 0.6); sfx('bounce', pos); }
+  if (type === 'b' && pos && nrm) { spawnRing(pos, nrm, col, 1.4, 0.6); impact(pos, nrm, col); sfx('bounce', pos); }
   else if (type === 'h' && pos) {
     floatText(pos, text, col);
     const c = pos.clone(); c.y -= 1.2;
     spawnRing(c, tmp.copy(camera.position).sub(c), col, 2.5, 0.4);
+    hitFx(c, fxDir.set(0, 0.4, 0), col);
     state.kick = 1;
     sfx('hit', pos);
   }
-  else if (type === 'r' && pos && nrm) { spawnRing(pos, nrm, col, 2.2, 0.35); sfx('block', pos); }
-  else if (type === 'c' && pos) { spawnRing(pos, tmp.copy(camera.position).sub(pos), 0xffffff, 2.5, 0.35); floatText(pos, 'CLASH', 0xffffff); sfx('clash', pos); }
+  else if (type === 'r' && pos && nrm) { spawnRing(pos, nrm, col, 2.2, 0.35); impact(pos, nrm, col, 0.8); sfx('block', pos); }
+  else if (type === 'c' && pos) { spawnRing(pos, tmp.copy(camera.position).sub(pos), 0xffffff, 2.5, 0.35); burst(pos, fxDir.set(0, 0.3, 0), 0xffffff, 24, 9, 1.3); flash(pos, 0xffffff, 1.2); floatText(pos, 'CLASH', 0xffffff); sfx('clash', pos); }
   // Your own throw already played its sound when you let go (the guest predicts it); only the rival's plays here.
   else if (type === 't') { if (side !== 1) sfx('throw', pos); }
   else if (type === 'k') sfx('catch', pos);
@@ -3658,13 +3944,22 @@ function tick(now, render) {
   updateHums();
   updatePreview();
   updateRings(state.mode === 'paused' ? 0 : dt);
+  updateSparks(state.mode === 'paused' ? 0 : dt);
+  updateFlashes(state.mode === 'paused' ? 0 : dt);
+  updateShocks(state.mode === 'paused' ? 0 : dt);
+  arenaFx.uTime.value = now / 1000;
   updateFloats(state.mode === 'paused' ? 0 : dt);
   stadiumUpdate(dt);
   // The guest draws shards from the host's snapshot inside netStep; everyone else from the local sim.
   if (net.role !== 'guest') drawShards(state.mode === 'playing' || state.mode === 'paused' || state.mode === 'menu' || state.mode === 'results' ? localShardList() : []);
   updateHUD(dt);
   const q = perfBegin();
-  if (composer && settings.bloom) composer.render(); else renderer.render(scene, camera);
+  if (composer && settings.bloom) {
+    const useAO = aoOn();
+    if (useAO) renderAO();
+    if (filmPass) filmPass.uniforms.aoAmount.value = useAO ? 0.85 : 0;
+    composer.render();
+  } else renderer.render(scene, camera);
   perfEnd(q);
   perfFrame(now, frameMs);
 }
